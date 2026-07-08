@@ -1,0 +1,22 @@
+/* Phase 0 — minimal reset. The full design system (Fraunces + Karla, 
+   ink/paper/rust palette from App.jsx) will be applied in Phase 2. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  line-height: 1.6;
+  color: #23241f;
+  background: #f6f1e6;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
