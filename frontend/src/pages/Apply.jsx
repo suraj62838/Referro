@@ -11,7 +11,12 @@ import {
   AlertTriangle,
   ClipboardPaste,
   Upload,
+  Send,
+  Wand2,
+  Sparkles,
 } from "lucide-react";
+
+
 
 function extractEmail(text) {
   const match = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
@@ -65,6 +70,11 @@ export default function Apply() {
   const [email, setEmail] = useState(jobPosting?.recruiter_email || "");
   const [jd, setJd] = useState(jobPosting?.jd_text || "");
   const [detectedEmail, setDetectedEmail] = useState(false);
+
+  const [stage, setStage] = useState("form"); // "form" | "review"
+  const [appId, setAppId] = useState(null);
+  const [draftSubject, setDraftSubject] = useState("");
+  const [draftBody, setDraftBody] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [fileState, setFileState] = useState("idle"); // idle -> parsing -> done
@@ -145,6 +155,8 @@ export default function Apply() {
       return;
     }
 
+    let createdAppId = null;
+
     try {
       setSubmitting(true);
       setError("");
@@ -166,20 +178,215 @@ export default function Apply() {
       );
 
       if (res.ok) {
-        navigate("/dashboard");
+        const createdApp = await res.json();
+        createdAppId = createdApp.id;
+        setAppId(createdAppId);
       } else {
         const errData = await res.json();
         const msg = Object.entries(errData)
           .map(([key, value]) => `${key}: ${value}`)
           .join(", ");
         setError(msg || "Failed to create job application.");
+        setSubmitting(false);
+        return;
       }
     } catch {
       setError("Network error — could not reach the server.");
+      setSubmitting(false);
+      return;
+    }
+
+    // Now draft the email using the created application ID
+    try {
+      setError("");
+      const draftRes = await authFetch(
+        `/job-applications/${createdAppId}/draft-email/`,
+        {
+          method: "POST",
+        },
+        accessToken
+      );
+
+      if (draftRes.ok) {
+        const data = await draftRes.json();
+        setDraftSubject(data.subject || "");
+        setDraftBody(data.body || "");
+        setStage("review");
+      } else {
+        const errData = await draftRes.json();
+        setError(errData.detail || "Failed to draft email with AI, but the application was successfully created.");
+      }
+    } catch {
+      setError("Network error — failed to generate AI email draft, but the application was successfully created.");
     } finally {
       setSubmitting(false);
     }
   };
+
+  const handleRegenerate = async () => {
+    if (!appId) return;
+    try {
+      setSubmitting(true);
+      setError("");
+      const draftRes = await authFetch(
+        `/job-applications/${appId}/draft-email/`,
+        {
+          method: "POST",
+        },
+        accessToken
+      );
+
+      if (draftRes.ok) {
+        const data = await draftRes.json();
+        setDraftSubject(data.subject || "");
+        setDraftBody(data.body || "");
+      } else {
+        const errData = await draftRes.json();
+        setError(errData.detail || "Failed to regenerate email draft.");
+      }
+    } catch {
+      setError("Network error — failed to regenerate AI email draft.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+
+  if (stage === "review") {
+    return (
+      <AppLayout>
+        <div className="rise" style={{ maxWidth: 640 }}>
+          <button
+            onClick={() => setStage("form")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              background: "none",
+              border: "none",
+              color: "var(--ink-soft)",
+              fontSize: 13.5,
+              marginBottom: 18,
+              padding: 0,
+              cursor: "pointer",
+            }}
+          >
+            <ArrowLeft size={15} /> Back to details
+          </button>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <Wand2 size={17} color="var(--rust)" />
+            <h1 style={{ fontSize: 22, fontWeight: 500 }}>Draft ready — review before sending</h1>
+          </div>
+          <p style={{ color: "var(--ink-soft)", fontSize: 14, marginBottom: 22 }}>
+            Nothing sends until you approve it.
+          </p>
+
+          {error && (
+            <div
+              style={{
+                background: "var(--rust-bg)",
+                color: "var(--rust-fg)",
+                border: "1px solid var(--rust)",
+                borderRadius: 12,
+                padding: "12px 16px",
+                marginBottom: 20,
+                fontSize: 14,
+              }}
+            >
+              {error}
+            </div>
+          )}
+
+          <div
+            style={{
+              background: "var(--paper-raised)",
+              border: "1px solid var(--line)",
+              borderRadius: 12,
+              overflow: "hidden",
+            }}
+          >
+            <div style={{ borderBottom: "1px solid var(--line)", padding: "12px 18px" }}>
+              <input
+                value={draftSubject}
+                onChange={(e) => setDraftSubject(e.target.value)}
+                style={{
+                  width: "100%",
+                  border: "none",
+                  background: "transparent",
+                  fontSize: 15,
+                  fontWeight: 600,
+                  outline: "none",
+                  color: "var(--ink)",
+                }}
+              />
+            </div>
+            <textarea
+              value={draftBody}
+              onChange={(e) => setDraftBody(e.target.value)}
+              rows={11}
+              style={{
+                width: "100%",
+                border: "none",
+                padding: 18,
+                fontSize: 14.5,
+                lineHeight: 1.7,
+                outline: "none",
+                resize: "vertical",
+                background: "transparent",
+                color: "var(--ink)",
+              }}
+            />
+          </div>
+
+          <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+            <button
+              onClick={() => navigate("/dashboard")}
+              disabled={submitting}
+              style={{
+                background: "var(--rust)",
+                color: "var(--paper)",
+                border: "none",
+                borderRadius: 8,
+                padding: "12px 22px",
+                fontSize: 14.5,
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              {submitting ? (
+                <Loader2 className="spin" size={15} style={{ animation: "spin 1s linear infinite" }} />
+              ) : (
+                <Send size={15} />
+              )}
+              Send from my inbox
+            </button>
+            <button
+              onClick={handleRegenerate}
+              disabled={submitting}
+              style={{
+                background: "transparent",
+                color: "var(--ink)",
+                border: "1.5px solid var(--line)",
+                borderRadius: 8,
+                padding: "12px 22px",
+                fontSize: 14.5,
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              {submitting && <Loader2 className="spin" size={15} style={{ animation: "spin 1s linear infinite" }} />}
+              Regenerate
+            </button>
+          </div>
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout>
@@ -419,10 +626,12 @@ export default function Apply() {
               width: "fit-content",
             }}
           >
-            {submitting && (
+            {submitting ? (
               <Loader2 className="spin" size={15} style={{ animation: "spin 1s linear infinite" }} />
+            ) : (
+              <Sparkles size={16} />
             )}
-            Create Application
+            {submitting ? "Drafting email..." : "Draft email with AI"}
           </button>
         </form>
       </div>

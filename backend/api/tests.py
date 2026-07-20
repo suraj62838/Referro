@@ -297,3 +297,72 @@ class ExtractTests(APITestCase):
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("Unsupported", res.data["detail"])
 
+
+class Phase4AITests(APITestCase):
+    """Phase 4: Tests for Job Description generation and email drafting."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="ai_user@example.com",
+            email="ai_user@example.com",
+            password="securePass123!",
+        )
+        login_url = reverse("auth-token-obtain")
+        res = self.client.post(
+            login_url,
+            {"email": "ai_user@example.com", "password": "securePass123!"},
+            format="json",
+        )
+        self.token = res.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+
+    def test_generate_jd_endpoint(self):
+        """POST /api/job-postings/generate-jd/ creates a JD with AI service."""
+        url = "/api/job-postings/generate-jd/"
+        data = {
+            "role_title": "React Developer",
+            "seniority": "Senior",
+            "key_skills": "React, TypeScript, CSS",
+            "notes": "Remote, small team",
+        }
+        res = self.client.post(url, data, format="json")
+        if res.status_code != status.HTTP_200_OK:
+            print("Generate JD response:", res.data)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn("jd_text", res.data)
+        self.assertIn("React Developer", res.data["jd_text"])
+        self.assertIn("Senior", res.data["jd_text"])
+        self.assertIn("React, TypeScript, CSS", res.data["jd_text"])
+
+    def test_generate_jd_missing_role(self):
+        """POST /api/job-postings/generate-jd/ fails if role is missing."""
+        url = "/api/job-postings/generate-jd/"
+        data = {
+            "seniority": "Senior",
+            "key_skills": "React",
+        }
+        res = self.client.post(url, data, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_draft_email_endpoint(self):
+        """POST /api/job-applications/{id}/draft-email/ drafts email for application."""
+        from api.models import JobApplication
+        app = JobApplication.objects.create(
+            user=self.user,
+            company_name="Stripe",
+            role_title="Backend Dev",
+            jd_text="Python knowledge required.",
+            recruiter_email="jobs@stripe.com",
+        )
+        url = f"/api/job-applications/{app.id}/draft-email/"
+        res = self.client.post(url, format="json")
+        if res.status_code != status.HTTP_200_OK:
+            print("Draft email response:", res.data)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn("subject", res.data)
+        self.assertIn("body", res.data)
+        self.assertIn("Stripe", res.data["subject"])
+        self.assertIn("Backend Dev", res.data["subject"])
+
+
+
