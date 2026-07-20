@@ -75,12 +75,8 @@ WSGI_APPLICATION = "referro_backend.wsgi.application"
 # ---------- Database ----------
 # Falls back to SQLite for zero-config local dev when DATABASE_URL is absent.
 
-DATABASES = {
-    "default": dj_database_url.config(
-        default="sqlite:///" + str(BASE_DIR / "db.sqlite3"),
-        conn_max_age=600,
-    )
-}
+DATABASE_URL = os.getenv("DATABASE_URL") or "sqlite:///" + str(BASE_DIR / "db.sqlite3")
+DATABASES = {"default": dj_database_url.parse(DATABASE_URL, conn_max_age=600)}
 
 # ---------- Auth / Passwords ----------
 

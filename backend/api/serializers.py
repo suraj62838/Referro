@@ -1,8 +1,19 @@
+"""
+DRF serializers.
+Phase 1: Auth serializers (SignupSerializer, MyTokenObtainPairSerializer).
+Phase 2: Added JobPostingSerializer, JobApplicationSerializer.
+"""
+
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
+from .models import JobApplication, JobPosting
+
+
+# ── Auth serializers ──────────────────────────────────────────
 
 
 class SignupSerializer(serializers.ModelSerializer):
@@ -55,3 +66,51 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
             "email": self.user.email,
         }
         return data
+
+
+# ── CRUD serializers ──────────────────────────────────────────
+
+
+class JobPostingSerializer(serializers.ModelSerializer):
+    """Full CRUD serializer for job postings.
+    `posted_by` is set automatically from request.user in the viewset."""
+
+    posted_by_email = serializers.EmailField(
+        source="posted_by.email", read_only=True
+    )
+
+    class Meta:
+        model = JobPosting
+        fields = [
+            "id",
+            "posted_by",
+            "posted_by_email",
+            "company_name",
+            "role_title",
+            "jd_text",
+            "recruiter_email",
+            "location",
+            "is_active",
+            "created_at",
+        ]
+        read_only_fields = ["id", "posted_by", "posted_by_email", "created_at"]
+
+
+class JobApplicationSerializer(serializers.ModelSerializer):
+    """Full CRUD serializer for job applications.
+    `user` is set automatically from request.user in the viewset."""
+
+    class Meta:
+        model = JobApplication
+        fields = [
+            "id",
+            "user",
+            "job_posting",
+            "company_name",
+            "role_title",
+            "jd_text",
+            "recruiter_email",
+            "status",
+            "created_at",
+        ]
+        read_only_fields = ["id", "user", "created_at"]

@@ -11,6 +11,7 @@ import Dashboard from "./pages/Dashboard.jsx";
 import Board from "./pages/Board.jsx";
 import Apply from "./pages/Apply.jsx";
 import Post from "./pages/Post.jsx";
+import ApplicationDetail from "./pages/ApplicationDetail.jsx";
 
 export default function App() {
   return (
@@ -48,6 +49,14 @@ export default function App() {
         element={
           <RequireAuth>
             <Post />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/application/:id"
+        element={
+          <RequireAuth>
+            <ApplicationDetail />
           </RequireAuth>
         }
       />
