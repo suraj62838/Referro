@@ -3,14 +3,20 @@ API views.
 Phase 1: Added user auth views (signup, custom token view).
 Phase 2: Added JobPostingViewSet and JobApplicationViewSet (full CRUD).
 Phase 3: Added extract_jd endpoint for JD text/file extraction + email detection.
+Phase 5: Added Gmail OAuth connect/callback, email-accounts/me, send-email action.
 """
 
+import json
+import logging
+
+from django.conf import settings
+from django.http import HttpResponseRedirect
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, parser_classes, permission_classes
 from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from services.email_extractor import extract_email
@@ -19,13 +25,15 @@ from services.text_extractor import (
     extract_text_from_file,
 )
 
-from .models import JobApplication, JobPosting
+from .models import EmailAccount, EmailLog, JobApplication, JobPosting
 from .serializers import (
     JobApplicationSerializer,
     JobPostingSerializer,
     MyTokenObtainPairSerializer,
     SignupSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ── Health check ──────────────────────────────────────────────
@@ -116,6 +124,120 @@ def extract_jd(request):
         },
         status=status.HTTP_200_OK,
     )
+
+
+# ── Gmail OAuth (Phase 5) ────────────────────────────────────
+
+
+@api_view(["GET"])
+def oauth_connect(request):
+    """Start the Gmail OAuth flow.
+
+    Returns ``{"auth_url": "..."}`` — the frontend opens this URL in the
+    same tab.  A JWT-signed ``state`` param ties the callback back to the
+    authenticated user so the callback view (which runs without a Bearer
+    header, since it's a Google redirect) can identify the user.
+    """
+    from services.gmail_service import build_auth_url
+
+    # Encode the user id into a short-lived JWT for the state param
+    token = AccessToken()
+    token["user_id"] = request.user.id
+    token.set_exp(lifetime=__import__("datetime").timedelta(minutes=10))
+    state = str(token)
+
+    auth_url = build_auth_url(state)
+    return Response({"auth_url": auth_url})
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def oauth_callback(request):
+    """Google OAuth callback — exchanges code for tokens, stores them
+    encrypted on EmailAccount, then redirects the browser back to the
+    frontend.
+
+    This view is AllowAny because the browser arrives here via a Google
+    redirect (no Bearer header).  We authenticate the user via the signed
+    ``state`` parameter instead.
+    """
+    from services.gmail_service import exchange_code
+
+    code = request.GET.get("code", "")
+    state = request.GET.get("state", "")
+    error = request.GET.get("error", "")
+
+    frontend_base = "http://localhost:5173"
+
+    if error:
+        logger.warning("OAuth callback received error: %s", error)
+        return HttpResponseRedirect(f"{frontend_base}/dashboard?oauth_error={error}")
+
+    if not code or not state:
+        return HttpResponseRedirect(f"{frontend_base}/dashboard?oauth_error=missing_params")
+
+    # Verify the state JWT to recover the user id
+    try:
+        token = AccessToken(state)
+        user_id = token["user_id"]
+    except Exception as exc:
+        logger.warning("OAuth state verification failed: %s", exc)
+        return HttpResponseRedirect(f"{frontend_base}/dashboard?oauth_error=invalid_state")
+
+    # Exchange the authorization code for tokens
+    try:
+        token_data = exchange_code(code)
+    except ValueError as exc:
+        logger.error("OAuth code exchange failed: %s", exc)
+        return HttpResponseRedirect(f"{frontend_base}/dashboard?oauth_error=exchange_failed")
+
+    # Upsert the EmailAccount for this user
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        return HttpResponseRedirect(f"{frontend_base}/dashboard?oauth_error=user_not_found")
+
+    account, _created = EmailAccount.objects.update_or_create(
+        user=user,
+        provider="gmail",
+        defaults={
+            "email_address": token_data["email"],
+        },
+    )
+    # Use property setters to encrypt before saving
+    account.access_token = token_data["access_token"]
+    account.refresh_token = token_data["refresh_token"]
+    account.save(update_fields=["_access_token", "_refresh_token", "email_address"])
+
+    logger.info("Gmail connected for user %s (%s)", user_id, token_data["email"])
+    return HttpResponseRedirect(f"{frontend_base}/dashboard?connected=1")
+
+
+@api_view(["GET"])
+def email_account_me(request):
+    """Return the current user's connected email account status.
+
+    Response: ``{"connected": bool, "email": str|null, "provider": str|null}``
+    """
+    account = (
+        EmailAccount.objects.filter(user=request.user)
+        .order_by("-connected_at")
+        .first()
+    )
+
+    if account:
+        return Response({
+            "connected": True,
+            "email": account.email_address,
+            "provider": account.provider,
+        })
+    return Response({
+        "connected": False,
+        "email": None,
+        "provider": None,
+    })
 
 
 # ── CRUD viewsets ─────────────────────────────────────────────
@@ -250,7 +372,6 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
             })
 
             # Robust JSON cleaning and parsing
-            import json
             text = generated_text.strip()
             if text.startswith("```json"):
                 text = text[7:]
@@ -276,3 +397,75 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @action(detail=True, methods=["post"], url_path="send-email")
+    def send_email(self, request, pk=None):
+        """Send the reviewed outreach email via the user's connected Gmail.
+
+        Expects ``{"subject": "...", "body": "..."}`` in the request body.
+        Creates an EmailLog, updates status to sent, returns the thread id.
+        """
+        from services.gmail_service import send_email as gmail_send
+
+        app = self.get_object()
+
+        subject = request.data.get("subject", "").strip()
+        body = request.data.get("body", "").strip()
+
+        if not subject or not body:
+            return Response(
+                {"detail": "Both subject and body are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not app.recruiter_email:
+            return Response(
+                {"detail": "No recruiter email on this application."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Get the user's connected email account
+        email_account = (
+            EmailAccount.objects.filter(user=request.user)
+            .order_by("-connected_at")
+            .first()
+        )
+
+        if not email_account:
+            return Response(
+                {"detail": "No connected email account. Please connect your Gmail first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            thread_id = gmail_send(
+                email_account,
+                to=app.recruiter_email,
+                subject=subject,
+                body=body,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # Create EmailLog
+        EmailLog.objects.create(
+            job_application=app,
+            subject=subject,
+            body=body,
+            gmail_thread_id=thread_id,
+        )
+
+        # Update application status
+        app.status = "sent"
+        app.save(update_fields=["status"])
+
+        return Response(
+            {
+                "success": True,
+                "thread_id": thread_id,
+                "status": "sent",
+            },
+            status=status.HTTP_200_OK,
+        )

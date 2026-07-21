@@ -5,6 +5,7 @@
  * Phase 2: Added authFetch that auto-attaches the JWT from sessionStorage,
  *          plus typed helpers for CRUD endpoints.
  * Phase 3: Added authFetchMultipart for file uploads (FormData).
+ * Phase 5: Added email account + send-email helpers.
  */
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
@@ -74,5 +75,57 @@ export async function authFetchMultipart(path, formData, accessToken = null) {
   return response;
 }
 
-export default apiFetch;
+// ── Phase 5 helpers ───────────────────────────────────────────
 
+/**
+ * Check whether the current user has a connected email account.
+ * @param {string} accessToken
+ * @returns {Promise<{connected: boolean, email: string|null, provider: string|null}>}
+ */
+export async function checkEmailAccount(accessToken) {
+  const res = await authFetch("/email-accounts/me/", {}, accessToken);
+  if (res.ok) {
+    return await res.json();
+  }
+  return { connected: false, email: null, provider: null };
+}
+
+/**
+ * Get the OAuth authorization URL to connect Gmail.
+ * @param {string} accessToken
+ * @returns {Promise<string>} The Google OAuth URL to redirect to
+ */
+export async function getOAuthConnectUrl(accessToken) {
+  const res = await authFetch("/email-accounts/oauth/connect/", {}, accessToken);
+  if (res.ok) {
+    const data = await res.json();
+    return data.auth_url;
+  }
+  throw new Error("Failed to get OAuth connect URL");
+}
+
+/**
+ * Send the reviewed email via the user's connected Gmail account.
+ * @param {number} appId - Job application ID
+ * @param {string} subject
+ * @param {string} body
+ * @param {string} accessToken
+ * @returns {Promise<{success: boolean, thread_id: string, status: string}>}
+ */
+export async function sendEmail(appId, subject, body, accessToken) {
+  const res = await authFetch(
+    `/job-applications/${appId}/send-email/`,
+    {
+      method: "POST",
+      body: JSON.stringify({ subject, body }),
+    },
+    accessToken
+  );
+  if (res.ok) {
+    return await res.json();
+  }
+  const errData = await res.json();
+  throw new Error(errData.detail || "Failed to send email");
+}
+
+export default apiFetch;

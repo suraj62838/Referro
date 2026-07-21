@@ -11,6 +11,7 @@ import {
   Plus,
   Send,
   LogOut,
+  Mail,
 } from "lucide-react";
 
 function Logo({ size = 22 }) {
@@ -41,6 +42,7 @@ const NAV_ITEMS = [
   { path: "/dashboard", label: "Applications", icon: LayoutGrid },
   { path: "/board", label: "Job board", icon: Briefcase },
   { path: "/post", label: "Post a job", icon: Plus },
+  { path: "/connect-inbox", label: "Connect inbox", icon: Mail },
 ];
 
 export default function Sidebar() {

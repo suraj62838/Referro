@@ -24,9 +24,9 @@ update the relevant section in the same PR/commit that changes behavior.
   (`gmail.send` + `gmail.readonly` scopes, or Outlook Graph equivalent) —
   emails are sent from the user's real mailbox, not a shared app address, so
   that recruiter replies land in a thread we can poll
-- **AI calls:** one shared backend service (`services/ai_writer.py`) used by
-  both JD generation and email drafting — do not call the LLM API directly
-  from views
+- **AI calls:** one shared backend service (`services/ai_writer.py`) utilizing
+  the Groq Chat Completions API (`llama-3.1-8b-instant` model) used by both JD
+  generation and email drafting — do not call the LLM API directly from views
 
 ## 2. Core design decisions (read before changing behavior)
 
@@ -169,7 +169,7 @@ JWT_SIGNING_KEY=
 GOOGLE_OAUTH_CLIENT_ID=
 GOOGLE_OAUTH_CLIENT_SECRET=
 GOOGLE_OAUTH_REDIRECT_URI=
-GROQ_API_KEY=   (or whichever LLM provider is used by services/ai_writer.py)
+GROQ_API_KEY=   (Groq API key for llama-3.1-8b-instant used by services/ai_writer.py)
 ```
 
 ## 8. Frontend reference

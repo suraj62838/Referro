@@ -4,6 +4,8 @@ Configured per README.md: PostgreSQL via DATABASE_URL, JWT auth,
 Celery + Celery Beat via REDIS_URL, CORS for frontend dev server.
 """
 
+import base64
+import hashlib
 import os
 from datetime import timedelta
 from pathlib import Path
@@ -145,3 +147,24 @@ USE_TZ = True
 STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ---------- Google OAuth (Phase 5) ----------
+
+GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
+    "GOOGLE_OAUTH_REDIRECT_URI",
+    "http://localhost:8000/api/email-accounts/oauth/callback/",
+)
+
+# ---------- Field-level encryption (Phase 5) ----------
+# Fernet requires a 32-byte URL-safe base64-encoded key.
+# If FIELD_ENCRYPTION_KEY is not set, we derive one from SECRET_KEY for dev.
+# In production, always set FIELD_ENCRYPTION_KEY to a real random value.
+_raw_key = os.getenv("FIELD_ENCRYPTION_KEY", "")
+if _raw_key:
+    FIELD_ENCRYPTION_KEY = _raw_key.encode()
+else:
+    # Derive a stable 32-byte key from SECRET_KEY via SHA-256
+    _digest = hashlib.sha256(SECRET_KEY.encode()).digest()
+    FIELD_ENCRYPTION_KEY = base64.urlsafe_b64encode(_digest)

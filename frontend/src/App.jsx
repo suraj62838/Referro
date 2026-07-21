@@ -12,6 +12,7 @@ import Board from "./pages/Board.jsx";
 import Apply from "./pages/Apply.jsx";
 import Post from "./pages/Post.jsx";
 import ApplicationDetail from "./pages/ApplicationDetail.jsx";
+import ConnectInbox from "./pages/ConnectInbox.jsx";
 
 export default function App() {
   return (
@@ -57,6 +58,14 @@ export default function App() {
         element={
           <RequireAuth>
             <ApplicationDetail />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/connect-inbox"
+        element={
+          <RequireAuth>
+            <ConnectInbox />
           </RequireAuth>
         }
       />

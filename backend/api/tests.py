@@ -356,13 +356,147 @@ class Phase4AITests(APITestCase):
         )
         url = f"/api/job-applications/{app.id}/draft-email/"
         res = self.client.post(url, format="json")
-        if res.status_code != status.HTTP_200_OK:
-            print("Draft email response:", res.data)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertIn("subject", res.data)
         self.assertIn("body", res.data)
         self.assertIn("Stripe", res.data["subject"])
         self.assertIn("Backend Dev", res.data["subject"])
+
+
+class Phase5OAuthAndSendingTests(APITestCase):
+    """Phase 5: Tests for Google OAuth flows, token storage, and Gmail sending."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="oauth_user@example.com",
+            email="oauth_user@example.com",
+            password="securePass123!",
+        )
+        login_url = reverse("auth-token-obtain")
+        res = self.client.post(
+            login_url,
+            {"email": "oauth_user@example.com", "password": "securePass123!"},
+            format="json",
+        )
+        self.token = res.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+
+    def test_oauth_connect_endpoint(self):
+        """GET /api/email-accounts/oauth/connect/ returns authorization redirect URL."""
+        url = "/api/email-accounts/oauth/connect/"
+        res = self.client.get(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn("auth_url", res.data)
+        self.assertIn("accounts.google.com", res.data["auth_url"])
+        self.assertIn("state=", res.data["auth_url"])
+
+    def test_email_account_me_endpoint_not_connected(self):
+        """GET /api/email-accounts/me/ returns connected: False if no account exists."""
+        url = "/api/email-accounts/me/"
+        res = self.client.get(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertFalse(res.data["connected"])
+        self.assertIsNone(res.data["email"])
+
+    def test_oauth_callback_endpoint(self):
+        """GET /api/email-accounts/oauth/callback/ handles state/code, stores tokens, redirects."""
+        from unittest.mock import patch
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        # Generate state JWT
+        token = AccessToken()
+        token["user_id"] = self.user.id
+        state = str(token)
+
+        callback_url = "/api/email-accounts/oauth/callback/"
+        
+        with patch("services.gmail_service.exchange_code") as mock_exchange:
+            mock_exchange.return_value = {
+                "access_token": "mock_access_token_123",
+                "refresh_token": "mock_refresh_token_456",
+                "email": "connected_gmail@example.com",
+            }
+
+            res = self.client.get(f"{callback_url}?code=google_code_xyz&state={state}")
+            
+            # Verify it redirects to the frontend dashboard with connection confirmation
+            self.assertEqual(res.status_code, 302)
+            self.assertIn("/dashboard?connected=1", res.url)
+
+            # Verify EmailAccount was created
+            from api.models import EmailAccount
+            account = EmailAccount.objects.filter(user=self.user).first()
+            self.assertIsNotNone(account)
+            self.assertEqual(account.email_address, "connected_gmail@example.com")
+            # Verify property getter/setter work through encryption
+            self.assertEqual(account.access_token, "mock_access_token_123")
+            self.assertEqual(account.refresh_token, "mock_refresh_token_456")
+
+            # Check email_account_me now shows connected
+            me_res = self.client.get("/api/email-accounts/me/")
+            self.assertEqual(me_res.status_code, status.HTTP_200_OK)
+            self.assertTrue(me_res.data["connected"])
+            self.assertEqual(me_res.data["email"], "connected_gmail@example.com")
+
+    def test_send_email_endpoint(self):
+        """POST /api/job-applications/{id}/send-email/ sends outreach via Gmail and logs it."""
+        from unittest.mock import patch
+        from api.models import EmailAccount, JobApplication, EmailLog
+
+        # 1. Create a job application
+        app = JobApplication.objects.create(
+            user=self.user,
+            company_name="Google",
+            role_title="Backend Engineer",
+            recruiter_email="recruiter@google.com",
+            jd_text="Job details...",
+            status="sent", # defaults to sent, but we will send
+        )
+
+        send_url = f"/api/job-applications/{app.id}/send-email/"
+
+        # Try to send without a connected email account first
+        res_no_account = self.client.post(
+            send_url,
+            {"subject": "Hello", "body": "My pitch"},
+            format="json"
+        )
+        self.assertEqual(res_no_account.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("connect your Gmail", res_no_account.data["detail"])
+
+        # Create connected account
+        account = EmailAccount.objects.create(
+            user=self.user,
+            provider="gmail",
+            email_address="sender@gmail.com",
+        )
+        account.access_token = "access"
+        account.refresh_token = "refresh"
+        account.save()
+
+        with patch("services.gmail_service.send_email") as mock_send:
+            mock_send.return_value = "thread_id_abc_123"
+
+            res = self.client.post(
+                send_url,
+                {"subject": "Hello recruiter", "body": "I am interested"},
+                format="json"
+            )
+            self.assertEqual(res.status_code, status.HTTP_200_OK)
+            self.assertTrue(res.data["success"])
+            self.assertEqual(res.data["thread_id"], "thread_id_abc_123")
+
+            # Verify EmailLog was created
+            log = EmailLog.objects.filter(job_application=app).first()
+            self.assertIsNotNone(log)
+            self.assertEqual(log.subject, "Hello recruiter")
+            self.assertEqual(log.body, "I am interested")
+            self.assertEqual(log.gmail_thread_id, "thread_id_abc_123")
+
+            # Verify application status was updated/remains sent (or actually set to sent)
+            app.refresh_from_db()
+            self.assertEqual(app.status, "sent")
+
 
 
 

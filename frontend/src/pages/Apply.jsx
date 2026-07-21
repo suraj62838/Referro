@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
-import { authFetch, authFetchMultipart } from "../api.js";
+import { authFetch, authFetchMultipart, checkEmailAccount, getOAuthConnectUrl, sendEmail } from "../api.js";
 import { TopBar, Field } from "../components/ui.jsx";
 import AppLayout from "../components/AppLayout.jsx";
 import {
@@ -14,6 +14,8 @@ import {
   Send,
   Wand2,
   Sparkles,
+  Mail,
+  ExternalLink,
 } from "lucide-react";
 
 
@@ -80,6 +82,11 @@ export default function Apply() {
   const [fileState, setFileState] = useState("idle"); // idle -> parsing -> done
   const [error, setError] = useState("");
 
+  // Phase 5: inbox connection state
+  const [inboxStatus, setInboxStatus] = useState(null); // null = loading, object = result
+  const [sending, setSending] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState(false);
+
   // Auto-detect email when JD text changes (only when pasting manually)
   useEffect(() => {
     if (isFromBoard) return;
@@ -94,6 +101,16 @@ export default function Apply() {
       }
     }
   }, [jd, isFromBoard, source]);
+
+  // Phase 5: Check inbox connection when entering review stage
+  useEffect(() => {
+    if (stage !== "review") return;
+    let cancelled = false;
+    checkEmailAccount(accessToken).then((data) => {
+      if (!cancelled) setInboxStatus(data);
+    });
+    return () => { cancelled = true; };
+  }, [stage, accessToken]);
 
   // Handle parsing file uploads via the extraction endpoint
   const handleFileUpload = async (file) => {
@@ -251,8 +268,39 @@ export default function Apply() {
     }
   };
 
+  // Phase 5: Real send via Gmail
+  const handleSend = async () => {
+    if (!appId || !draftSubject.trim() || !draftBody.trim()) return;
+
+    try {
+      setSending(true);
+      setError("");
+      const result = await sendEmail(appId, draftSubject, draftBody, accessToken);
+      setSendSuccess(true);
+      // Short delay so user sees the success state, then navigate
+      setTimeout(() => navigate("/dashboard", { state: { sent: true } }), 1200);
+    } catch (err) {
+      setError(err.message || "Failed to send email.");
+      setSending(false);
+    }
+  };
+
+  // Phase 5: Start OAuth connect from review screen
+  const handleConnectInbox = async () => {
+    try {
+      setError("");
+      const authUrl = await getOAuthConnectUrl(accessToken);
+      window.location.href = authUrl;
+    } catch (err) {
+      setError(err.message || "Failed to start Gmail connection.");
+    }
+  };
+
 
   if (stage === "review") {
+    const isInboxLoading = inboxStatus === null;
+    const isConnected = inboxStatus?.connected === true;
+
     return (
       <AppLayout>
         <div className="rise" style={{ maxWidth: 640 }}>
@@ -295,6 +343,95 @@ export default function Apply() {
               }}
             >
               {error}
+            </div>
+          )}
+
+          {/* Phase 5: Send success banner */}
+          {sendSuccess && (
+            <div
+              style={{
+                background: "var(--sage-bg)",
+                color: "var(--sage-fg)",
+                border: "1px solid var(--sage-fg)",
+                borderRadius: 12,
+                padding: "14px 18px",
+                marginBottom: 20,
+                fontSize: 14,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                fontWeight: 600,
+              }}
+            >
+              <CheckCircle size={18} />
+              Email sent successfully! Redirecting to dashboard...
+            </div>
+          )}
+
+          {/* Phase 5: Connect inbox banner (shown when not connected) */}
+          {!isInboxLoading && !isConnected && !sendSuccess && (
+            <div
+              style={{
+                background: "var(--amber-bg)",
+                border: "1px solid var(--amber-fg)",
+                borderRadius: 12,
+                padding: "16px 18px",
+                marginBottom: 20,
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+              }}
+            >
+              <Mail size={22} color="var(--amber-fg)" style={{ flexShrink: 0 }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, fontSize: 14, color: "var(--ink)", marginBottom: 3 }}>
+                  Connect your Gmail to send
+                </div>
+                <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                  We need access to your mailbox to send this email on your behalf.
+                </div>
+              </div>
+              <button
+                onClick={handleConnectInbox}
+                style={{
+                  background: "var(--ink)",
+                  color: "var(--paper)",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "9px 16px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <ExternalLink size={13} />
+                Connect Gmail
+              </button>
+            </div>
+          )}
+
+          {/* Connected account indicator */}
+          {!isInboxLoading && isConnected && !sendSuccess && (
+            <div
+              style={{
+                background: "var(--sage-bg)",
+                borderRadius: 10,
+                padding: "10px 14px",
+                marginBottom: 20,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: 13,
+                color: "var(--sage-fg)",
+                fontWeight: 600,
+              }}
+            >
+              <CheckCircle size={14} />
+              Sending from {inboxStatus.email}
             </div>
           )}
 
@@ -341,10 +478,10 @@ export default function Apply() {
 
           <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
             <button
-              onClick={() => navigate("/dashboard")}
-              disabled={submitting}
+              onClick={handleSend}
+              disabled={sending || sendSuccess || !isConnected || isInboxLoading}
               style={{
-                background: "var(--rust)",
+                background: isConnected ? "var(--rust)" : "var(--ink-soft)",
                 color: "var(--paper)",
                 border: "none",
                 borderRadius: 8,
@@ -354,18 +491,22 @@ export default function Apply() {
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
+                cursor: isConnected && !sending && !sendSuccess ? "pointer" : "not-allowed",
+                opacity: sending || sendSuccess || !isConnected ? 0.7 : 1,
               }}
             >
-              {submitting ? (
+              {sending ? (
                 <Loader2 className="spin" size={15} style={{ animation: "spin 1s linear infinite" }} />
+              ) : sendSuccess ? (
+                <CheckCircle size={15} />
               ) : (
                 <Send size={15} />
               )}
-              Send from my inbox
+              {sending ? "Sending..." : sendSuccess ? "Sent!" : "Send from my inbox"}
             </button>
             <button
               onClick={handleRegenerate}
-              disabled={submitting}
+              disabled={submitting || sending || sendSuccess}
               style={{
                 background: "transparent",
                 color: "var(--ink)",
@@ -638,4 +779,3 @@ export default function Apply() {
     </AppLayout>
   );
 }
-

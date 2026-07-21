@@ -3,6 +3,7 @@ API URL configuration.
 Phase 1: Added user auth routes.
 Phase 2: Added DRF router for JobPosting and JobApplication CRUD.
 Phase 3: Added extract endpoint for JD text/file extraction.
+Phase 5: Added Gmail OAuth connect/callback and email-accounts/me.
 """
 
 from django.urls import include, path
@@ -34,7 +35,22 @@ urlpatterns = [
         views.extract_jd,
         name="job-application-extract",
     ),
+    # Gmail OAuth (Phase 5)
+    path(
+        "email-accounts/oauth/connect/",
+        views.oauth_connect,
+        name="email-oauth-connect",
+    ),
+    path(
+        "email-accounts/oauth/callback/",
+        views.oauth_callback,
+        name="email-oauth-callback",
+    ),
+    path(
+        "email-accounts/me/",
+        views.email_account_me,
+        name="email-account-me",
+    ),
     # CRUD endpoints (DRF Router)
     path("", include(router.urls)),
 ]
-
