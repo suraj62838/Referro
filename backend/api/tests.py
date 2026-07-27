@@ -498,5 +498,125 @@ class Phase5OAuthAndSendingTests(APITestCase):
             self.assertEqual(app.status, "sent")
 
 
+class Phase6ReplyPollingTests(APITestCase):
+    """Phase 6: Tests for reply polling task and detail view nested logs."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="poll_user@example.com",
+            email="poll_user@example.com",
+            password="securePass123!",
+        )
+        login_url = reverse("auth-token-obtain")
+        res = self.client.post(
+            login_url,
+            {"email": "poll_user@example.com", "password": "securePass123!"},
+            format="json",
+        )
+        self.token = res.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+
+    def test_application_detail_nested_logs(self):
+        """GET /api/job-applications/{id}/ includes email_logs and reply_logs."""
+        from api.models import EmailLog, JobApplication, ReplyLog
+
+        app = JobApplication.objects.create(
+            user=self.user,
+            company_name="Netflix",
+            role_title="Senior Engineer",
+            status="sent",
+        )
+        email_log = EmailLog.objects.create(
+            job_application=app,
+            subject="Application for Senior Engineer",
+            body="Hello, I would like to apply.",
+            gmail_thread_id="thread_xyz_789",
+        )
+        reply_log = ReplyLog.objects.create(
+            job_application=app,
+            snippet="Thanks for reaching out!",
+            body="Thanks for reaching out! We'd love to chat.",
+            gmail_message_id="msg_reply_123",
+        )
+
+        res = self.client.get(f"/api/job-applications/{app.id}/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn("email_logs", res.data)
+        self.assertIn("reply_logs", res.data)
+        self.assertEqual(len(res.data["email_logs"]), 1)
+        self.assertEqual(len(res.data["reply_logs"]), 1)
+        self.assertEqual(res.data["email_logs"][0]["subject"], "Application for Senior Engineer")
+        self.assertEqual(res.data["reply_logs"][0]["snippet"], "Thanks for reaching out!")
+
+    def test_poll_replies_task(self):
+        """poll_replies task detects new messages in sent thread, creates ReplyLog, updates status to replied."""
+        from unittest.mock import patch
+        from api.models import EmailAccount, EmailLog, JobApplication, ReplyLog
+        from api.tasks import poll_replies
+
+        # 1. Setup email account and sent application
+        account = EmailAccount.objects.create(
+            user=self.user,
+            provider="gmail",
+            email_address="applicant@example.com",
+        )
+        account.access_token = "valid_token"
+        account.save()
+
+        app = JobApplication.objects.create(
+            user=self.user,
+            company_name="Apple",
+            role_title="iOS Developer",
+            status="sent",
+        )
+
+        email_log = EmailLog.objects.create(
+            job_application=app,
+            subject="Outreach for iOS Dev",
+            body="Hi, sending my resume.",
+            gmail_thread_id="apple_thread_1",
+        )
+
+        # Mock get_thread_messages to return two messages: 1 sent by user, 1 received reply
+        mock_messages = [
+            {
+                "id": "msg_sent_1",
+                "snippet": "Hi, sending my resume.",
+                "body": "Hi, sending my resume.",
+                "date": "Mon, 27 Jul 2026 10:00:00 GMT",
+                "from": "applicant@example.com",
+            },
+            {
+                "id": "msg_reply_2",
+                "snippet": "We saw your resume and would like an interview.",
+                "body": "We saw your resume and would like an interview.",
+                "date": "Mon, 27 Jul 2026 12:00:00 GMT",
+                "from": "recruiter@apple.com",
+            },
+        ]
+
+        with patch("services.gmail_service.get_thread_messages") as mock_get_thread:
+            mock_get_thread.return_value = mock_messages
+
+            result = poll_replies()
+            self.assertIn("found 1 new replies", result)
+
+            # Check that ReplyLog was created
+            replies = ReplyLog.objects.filter(job_application=app)
+            self.assertEqual(replies.count(), 1)
+            self.assertEqual(replies.first().gmail_message_id, "msg_reply_2")
+            self.assertEqual(replies.first().snippet, "We saw your resume and would like an interview.")
+
+            # Check that JobApplication status updated to replied
+            app.refresh_from_db()
+            self.assertEqual(app.status, "replied")
+
+            # Run poll_replies a second time — application status is now 'replied', so it is no longer polled
+            result2 = poll_replies()
+            self.assertEqual(result2, "No threads to check.")
+            self.assertEqual(ReplyLog.objects.filter(job_application=app).count(), 1)
+
+
+
 
 

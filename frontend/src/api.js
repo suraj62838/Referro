@@ -128,4 +128,44 @@ export async function sendEmail(appId, subject, body, accessToken) {
   throw new Error(errData.detail || "Failed to send email");
 }
 
+// ── Phase 6 helpers ───────────────────────────────────────────
+
+/**
+ * Fetch full application detail including email_logs and reply_logs.
+ * @param {number} appId - Job application ID
+ * @param {string} accessToken
+ * @returns {Promise<object>} Full application object with nested logs
+ */
+export async function fetchApplicationDetail(appId, accessToken) {
+  const res = await authFetch(`/job-applications/${appId}/`, {}, accessToken);
+  if (res.ok) {
+    return await res.json();
+  }
+  const errData = await res.json().catch(() => ({}));
+  throw new Error(errData.detail || "Failed to load application details");
+}
+
+/**
+ * Update a job application's status.
+ * @param {number} appId - Job application ID
+ * @param {string} newStatus - One of: sent, replied, interview, rejected
+ * @param {string} accessToken
+ * @returns {Promise<object>} Updated application object
+ */
+export async function updateApplicationStatus(appId, newStatus, accessToken) {
+  const res = await authFetch(
+    `/job-applications/${appId}/`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status: newStatus }),
+    },
+    accessToken
+  );
+  if (res.ok) {
+    return await res.json();
+  }
+  const errData = await res.json().catch(() => ({}));
+  throw new Error(errData.detail || "Failed to update status");
+}
+
 export default apiFetch;

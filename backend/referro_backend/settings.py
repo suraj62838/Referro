@@ -132,8 +132,13 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 
-# Celery Beat schedule — empty for Phase 0, will be filled in later phases.
-CELERY_BEAT_SCHEDULE = {}
+# Celery Beat schedule — Phase 6: poll for replies every 5 minutes.
+CELERY_BEAT_SCHEDULE = {
+    "poll-replies-every-5-min": {
+        "task": "api.tasks.poll_replies",
+        "schedule": 300.0,  # 5 minutes
+    },
+}
 
 # ---------- i18n ----------
 

@@ -192,3 +192,88 @@ def send_email(email_account, to: str, subject: str, body: str) -> str:
     except Exception as exc:
         logger.error("Gmail send failed: %s", exc)
         raise ValueError(f"Failed to send email via Gmail: {exc}") from exc
+
+
+def get_thread_messages(email_account, thread_id: str) -> list[dict]:
+    """Fetch all messages in a Gmail thread.
+
+    Args:
+        email_account: An api.models.EmailAccount instance.
+        thread_id: The Gmail thread ID to fetch.
+
+    Returns:
+        A list of dicts, each with keys: id, snippet, body, date.
+        Ordered by date ascending (oldest first).
+
+    Raises:
+        ValueError: If fetching fails.
+    """
+    creds = get_credentials(email_account)
+    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+    try:
+        thread = (
+            service.users()
+            .threads()
+            .get(userId="me", id=thread_id, format="full")
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("Gmail thread fetch failed for thread %s: %s", thread_id, exc)
+        raise ValueError(f"Failed to fetch Gmail thread: {exc}") from exc
+
+    messages = []
+    for msg in thread.get("messages", []):
+        msg_id = msg.get("id", "")
+        snippet = msg.get("snippet", "")
+
+        # Extract date from headers
+        headers = msg.get("payload", {}).get("headers", [])
+        date_str = ""
+        from_addr = ""
+        for h in headers:
+            if h["name"].lower() == "date":
+                date_str = h["value"]
+            if h["name"].lower() == "from":
+                from_addr = h["value"]
+
+        # Extract body — try plain text first, then html
+        body = _extract_body(msg.get("payload", {}))
+
+        messages.append({
+            "id": msg_id,
+            "snippet": snippet,
+            "body": body,
+            "date": date_str,
+            "from": from_addr,
+        })
+
+    return messages
+
+
+def _extract_body(payload: dict) -> str:
+    """Recursively extract the plain-text body from a Gmail message payload.
+
+    Falls back to the snippet if no decodable body is found.
+    """
+    mime_type = payload.get("mimeType", "")
+
+    # Direct body on this part
+    if mime_type == "text/plain":
+        data = payload.get("body", {}).get("data", "")
+        if data:
+            return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+
+    # Multipart — recurse into parts
+    parts = payload.get("parts", [])
+    for part in parts:
+        result = _extract_body(part)
+        if result:
+            return result
+
+    # Fallback: try top-level body data regardless of MIME type
+    data = payload.get("body", {}).get("data", "")
+    if data:
+        return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+
+    return ""

@@ -122,6 +122,10 @@ class ReplyLog(models.Model):
     )
     snippet = models.CharField(max_length=500, blank=True, default="")
     body = models.TextField(blank=True, default="")
+    gmail_message_id = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Gmail message ID for deduplication during polling.",
+    )
     received_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

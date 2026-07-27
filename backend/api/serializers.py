@@ -2,6 +2,7 @@
 DRF serializers.
 Phase 1: Auth serializers (SignupSerializer, MyTokenObtainPairSerializer).
 Phase 2: Added JobPostingSerializer, JobApplicationSerializer.
+Phase 6: Added EmailLogSerializer, ReplyLogSerializer, JobApplicationDetailSerializer.
 """
 
 from django.contrib.auth.models import User
@@ -10,7 +11,7 @@ from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import JobApplication, JobPosting
+from .models import EmailLog, JobApplication, JobPosting, ReplyLog
 
 
 # ── Auth serializers ──────────────────────────────────────────
@@ -112,5 +113,63 @@ class JobApplicationSerializer(serializers.ModelSerializer):
             "recruiter_email",
             "status",
             "created_at",
+        ]
+        read_only_fields = ["id", "user", "created_at"]
+
+
+# ── Phase 6: Timeline / detail serializers ────────────────────
+
+
+class EmailLogSerializer(serializers.ModelSerializer):
+    """Read-only serializer for sent email records."""
+
+    class Meta:
+        model = EmailLog
+        fields = [
+            "id",
+            "subject",
+            "body",
+            "sent_at",
+            "gmail_thread_id",
+        ]
+        read_only_fields = fields
+
+
+class ReplyLogSerializer(serializers.ModelSerializer):
+    """Read-only serializer for detected reply records."""
+
+    class Meta:
+        model = ReplyLog
+        fields = [
+            "id",
+            "snippet",
+            "body",
+            "gmail_message_id",
+            "received_at",
+        ]
+        read_only_fields = fields
+
+
+class JobApplicationDetailSerializer(serializers.ModelSerializer):
+    """Extended serializer for the application detail/retrieve view.
+    Includes nested email_logs and reply_logs for the timeline display."""
+
+    email_logs = EmailLogSerializer(many=True, read_only=True)
+    reply_logs = ReplyLogSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = JobApplication
+        fields = [
+            "id",
+            "user",
+            "job_posting",
+            "company_name",
+            "role_title",
+            "jd_text",
+            "recruiter_email",
+            "status",
+            "created_at",
+            "email_logs",
+            "reply_logs",
         ]
         read_only_fields = ["id", "user", "created_at"]

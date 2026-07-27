@@ -27,6 +27,7 @@ from services.text_extractor import (
 
 from .models import EmailAccount, EmailLog, JobApplication, JobPosting
 from .serializers import (
+    JobApplicationDetailSerializer,
     JobApplicationSerializer,
     JobPostingSerializer,
     MyTokenObtainPairSerializer,
@@ -326,14 +327,25 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
     """Full CRUD for job applications, scoped to the authenticated user.
 
     A user can only see, create, edit, and delete their own applications.
+    Phase 6: retrieve action returns nested email_logs and reply_logs.
     """
 
     serializer_class = JobApplicationSerializer
 
+    def get_serializer_class(self):
+        """Use the detail serializer (with timeline data) for retrieve."""
+        if self.action == "retrieve":
+            return JobApplicationDetailSerializer
+        return JobApplicationSerializer
+
     def get_queryset(self):
-        return JobApplication.objects.filter(
+        qs = JobApplication.objects.filter(
             user=self.request.user
         ).select_related("job_posting")
+        # Prefetch email/reply logs for the detail view
+        if self.action == "retrieve":
+            qs = qs.prefetch_related("email_logs", "reply_logs")
+        return qs
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
