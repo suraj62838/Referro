@@ -79,6 +79,9 @@ class JobPostingSerializer(serializers.ModelSerializer):
     posted_by_email = serializers.EmailField(
         source="posted_by.email", read_only=True
     )
+    recruiter_email = serializers.EmailField(
+        required=False, allow_blank=True, default=""
+    )
 
     class Meta:
         model = JobPosting
@@ -101,6 +104,12 @@ class JobApplicationSerializer(serializers.ModelSerializer):
     """Full CRUD serializer for job applications.
     `user` is set automatically from request.user in the viewset."""
 
+    recruiter_email = serializers.EmailField(
+        required=False, allow_blank=True, default=""
+    )
+    is_self_application = serializers.SerializerMethodField()
+    warning = serializers.SerializerMethodField()
+
     class Meta:
         model = JobApplication
         fields = [
@@ -112,9 +121,26 @@ class JobApplicationSerializer(serializers.ModelSerializer):
             "jd_text",
             "recruiter_email",
             "status",
+            "is_self_application",
+            "warning",
             "created_at",
         ]
-        read_only_fields = ["id", "user", "created_at"]
+        read_only_fields = ["id", "user", "created_at", "is_self_application", "warning"]
+
+    def get_is_self_application(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user or not request.user.is_authenticated:
+            return False
+        if obj.job_posting and obj.job_posting.posted_by_id == request.user.id:
+            return True
+        if obj.recruiter_email and request.user.email and obj.recruiter_email.lower() == request.user.email.lower():
+            return True
+        return False
+
+    def get_warning(self, obj):
+        if self.get_is_self_application(obj):
+            return "Warning: You are applying to your own job posting."
+        return None
 
 
 # ── Phase 6: Timeline / detail serializers ────────────────────
@@ -150,26 +176,15 @@ class ReplyLogSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class JobApplicationDetailSerializer(serializers.ModelSerializer):
+class JobApplicationDetailSerializer(JobApplicationSerializer):
     """Extended serializer for the application detail/retrieve view.
     Includes nested email_logs and reply_logs for the timeline display."""
 
     email_logs = EmailLogSerializer(many=True, read_only=True)
     reply_logs = ReplyLogSerializer(many=True, read_only=True)
 
-    class Meta:
-        model = JobApplication
-        fields = [
-            "id",
-            "user",
-            "job_posting",
-            "company_name",
-            "role_title",
-            "jd_text",
-            "recruiter_email",
-            "status",
-            "created_at",
+    class Meta(JobApplicationSerializer.Meta):
+        fields = JobApplicationSerializer.Meta.fields + [
             "email_logs",
             "reply_logs",
         ]
-        read_only_fields = ["id", "user", "created_at"]

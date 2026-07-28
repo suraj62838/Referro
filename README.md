@@ -129,6 +129,20 @@ Reply detection is not a user-facing endpoint — it's a Celery Beat task
 (`poll_replies`) that runs periodically, checks `gmail_thread_id` on open
 `EmailLog`s, and writes new `ReplyLog` rows + updates `JobApplication.status`.
 
+### Rate limits & input validation
+
+- **Rate limits (throttling):**
+  - `/api/job-applications/extract/`: 15 requests / minute
+  - `/api/job-postings/generate-jd/`: 10 requests / minute
+  - `/api/job-applications/{id}/draft-email/`: 15 requests / minute
+  - `POST /api/job-postings/`: 20 creations / hour
+  - Default authenticated API calls: 100 requests / minute
+  - Unauthenticated calls: 20 requests / minute
+- **File upload validation:**
+  - `POST /api/job-applications/extract/` accepts PDF, DOCX, PNG, JPEG, WEBP files up to **5 MB**.
+- **Self-application guard:**
+  - `POST /api/job-applications/` returns `is_self_application: true` and a `warning` message if the user applies to a job posting they created themselves.
+
 ## 5. End-to-end flow (applicant side)
 
 1. User authenticates (blocked from everything otherwise).

@@ -145,6 +145,17 @@ export async function fetchApplicationDetail(appId, accessToken) {
   throw new Error(errData.detail || "Failed to load application details");
 }
 
+export async function checkApplicationReplies(appId, accessToken) {
+  const res = await authFetch(
+    `/job-applications/${appId}/check-replies/`,
+    { method: "POST" },
+    accessToken
+  );
+  if (res.ok) return res.json();
+  const errData = await res.json().catch(() => ({}));
+  throw new Error(errData.detail || "Failed to check for replies");
+}
+
 /**
  * Update a job application's status.
  * @param {number} appId - Job application ID

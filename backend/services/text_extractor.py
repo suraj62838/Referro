@@ -25,8 +25,20 @@ _MIME_HANDLERS = {
 
 ALLOWED_CONTENT_TYPES = set(_MIME_HANDLERS.keys())
 
-# 10 MB max file size.
-MAX_FILE_SIZE = 10 * 1024 * 1024
+# 5 MB max file size.
+MAX_FILE_SIZE = 5 * 1024 * 1024
+
+# Extension to MIME type fallback
+_EXT_MIME = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".png": "image/png",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".webp": "image/webp",
+    ".tiff": "image/tiff",
+    ".bmp": "image/bmp",
+}
 
 
 def extract_text_from_file(file: UploadedFile) -> str:
@@ -47,12 +59,20 @@ def extract_text_from_file(file: UploadedFile) -> str:
     ValueError
         If the MIME type is unsupported or the file is too large.
     """
+    import os
+
     content_type = file.content_type or ""
+
+    # Fallback to extension if content_type is generic/missing
+    if content_type not in _MIME_HANDLERS and file.name:
+        ext = os.path.splitext(file.name)[1].lower()
+        if ext in _EXT_MIME:
+            content_type = _EXT_MIME[ext]
 
     if content_type not in _MIME_HANDLERS:
         raise ValueError(
-            f"Unsupported file type: {content_type}. "
-            f"Accepted types: PDF, DOCX, PNG, JPEG."
+            f"Unsupported file type: {content_type or 'unknown'}. "
+            f"Accepted types: PDF, DOCX, PNG, JPEG, WEBP."
         )
 
     if file.size and file.size > MAX_FILE_SIZE:

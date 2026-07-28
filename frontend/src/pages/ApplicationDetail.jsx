@@ -7,8 +7,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
-import { fetchApplicationDetail, updateApplicationStatus } from "../api.js";
-import { TopBar, StatusPill } from "../components/ui.jsx";
+import { checkApplicationReplies, fetchApplicationDetail, updateApplicationStatus } from "../api.js";
+import { StatusPill } from "../components/ui.jsx";
 import AppLayout from "../components/AppLayout.jsx";
 import {
   ArrowLeft,
@@ -21,8 +21,6 @@ import {
   Trash2,
   Loader2,
   Mail,
-  ChevronDown,
-  ChevronUp,
 } from "lucide-react";
 
 /* ── TimelineRow ─────────────────────────────────────────────── */
@@ -89,8 +87,55 @@ function TimelineRow({ icon: Icon, label, detail, active, highlight, isLast }) {
 
 /* ── ReplyCard ────────────────────────────────────────────────── */
 
+function cleanEmailText(value) {
+  let text = String(value || "").trim();
+
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed.body === "string") text = parsed.body;
+    } catch {
+      const body = text.match(/"body"\s*:\s*("(?:\\.|[^"])*")\s*[,}]?\s*$/s);
+      if (body) {
+        try {
+          text = JSON.parse(body[1]);
+        } catch {
+          // Normal email text is not JSON.
+        }
+      }
+    }
+
+    const decoded = new DOMParser()
+      .parseFromString(
+        text
+          .replace(/<a\b[^>]*href=["']?([^"'\s>]+)[^>]*>(.*?)<\/a>/gi, "$2 ($1)")
+          .replace(/<\s*br\s*\/?>|<\/?(?:p|div|li|tr|h[1-6])\b[^>]*>/gi, "\n"),
+        "text/html"
+      )
+      .body.textContent;
+    if (decoded === text) break;
+    text = decoded;
+  }
+
+  return text
+    .replace(/\s+On\s[\s\S]{0,200}?\swrote:\s*[\s\S]*$/i, "")
+    .replace(/\n[-_]{3,}\s*(?:Original|Forwarded) Message[\s\S]*$/i, "")
+    .replace(/\r\n/g, "\n")
+    .trim();
+}
+
+function EmailText({ children }) {
+  return String(children).split(/(https?:\/\/[^\s<>()]+)/g).map((part, index) =>
+    /^https?:\/\//.test(part) ? (
+      <a key={index} href={part} target="_blank" rel="noreferrer" style={{ color: "var(--rust)" }}>
+        {part}
+      </a>
+    ) : part
+  );
+}
+
 function ReplyCard({ reply }) {
-  const [expanded, setExpanded] = useState(false);
+  const message = cleanEmailText(reply.body || reply.snippet) || "(No preview available)";
 
   const formatDate = (iso) => {
     if (!iso) return "";
@@ -129,9 +174,10 @@ function ReplyCard({ reply }) {
               fontSize: 13.5,
               color: "var(--ink)",
               lineHeight: 1.5,
+              whiteSpace: "pre-wrap",
             }}
           >
-            {reply.snippet || "(No preview available)"}
+            <EmailText>{message}</EmailText>
           </div>
           <div
             style={{
@@ -143,47 +189,7 @@ function ReplyCard({ reply }) {
             {formatDate(reply.received_at)}
           </div>
         </div>
-        {reply.body && reply.body !== reply.snippet && (
-          <button
-            onClick={() => setExpanded(!expanded)}
-            style={{
-              background: "none",
-              border: "1px solid var(--line)",
-              borderRadius: 6,
-              padding: "4px 8px",
-              color: "var(--ink-soft)",
-              fontSize: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              flexShrink: 0,
-            }}
-          >
-            {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            {expanded ? "Less" : "More"}
-          </button>
-        )}
       </div>
-      {expanded && reply.body && (
-        <div
-          style={{
-            marginTop: 12,
-            padding: "12px 14px",
-            background: "var(--paper)",
-            borderRadius: 8,
-            border: "1px solid var(--line)",
-            fontSize: 13.5,
-            lineHeight: 1.65,
-            whiteSpace: "pre-wrap",
-            color: "var(--ink)",
-            maxHeight: 300,
-            overflow: "auto",
-          }}
-          className="scrollbar-thin"
-        >
-          {reply.body}
-        </div>
-      )}
     </div>
   );
 }
@@ -217,10 +223,25 @@ export default function ApplicationDetail() {
     loadApplication();
   }, [loadApplication]);
 
+  useEffect(() => {
+    const synchronizeReplies = async () => {
+      try {
+        await checkApplicationReplies(id, accessToken);
+        setApp(await fetchApplicationDetail(id, accessToken));
+      } catch {
+        // Do not interrupt the page when background synchronization fails.
+      }
+    };
+
+    synchronizeReplies();
+    const interval = setInterval(synchronizeReplies, 30000);
+    return () => clearInterval(interval);
+  }, [id, accessToken]);
+
   const handleStatusChange = async (newStatus) => {
     try {
       setUpdating(true);
-      const updated = await updateApplicationStatus(id, newStatus, accessToken);
+      await updateApplicationStatus(id, newStatus, accessToken);
       // Re-fetch full detail to get updated nested data
       const full = await fetchApplicationDetail(id, accessToken);
       setApp(full);
@@ -384,7 +405,7 @@ export default function ApplicationDetail() {
         icon: Inbox,
         label: i === 0 ? "HR replied" : `Follow-up reply`,
         detail: reply.snippet
-          ? `${reply.snippet.substring(0, 80)}${reply.snippet.length > 80 ? "…" : ""}`
+          ? `${cleanEmailText(reply.body || reply.snippet).substring(0, 80)}${cleanEmailText(reply.body || reply.snippet).length > 80 ? "…" : ""}`
           : `Reply received ${formatDate(reply.received_at)}`,
         active: true,
         highlight: true,
@@ -618,7 +639,7 @@ export default function ApplicationDetail() {
               }}
               className="scrollbar-thin"
             >
-              {sentEmail.body}
+              <EmailText>{cleanEmailText(sentEmail.body)}</EmailText>
             </div>
           </div>
         )}

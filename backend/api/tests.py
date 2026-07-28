@@ -2,6 +2,7 @@ from django.contrib.auth.models import User
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
+from rest_framework_simplejwt.tokens import RefreshToken
 
 
 class AuthTests(APITestCase):
@@ -68,13 +69,9 @@ class JobCrudTests(APITestCase):
         self.user1 = User.objects.create_user(username="user1@example.com", email="user1@example.com", password="password123")
         self.user2 = User.objects.create_user(username="user2@example.com", email="user2@example.com", password="password123")
 
-        # Obtain JWT tokens
-        login_url = reverse("auth-token-obtain")
-        res1 = self.client.post(login_url, {"email": "user1@example.com", "password": "password123"}, format="json")
-        self.token1 = res1.data["access"]
-
-        res2 = self.client.post(login_url, {"email": "user2@example.com", "password": "password123"}, format="json")
-        self.token2 = res2.data["access"]
+        # Generate JWT tokens directly
+        self.token1 = str(RefreshToken.for_user(self.user1).access_token)
+        self.token2 = str(RefreshToken.for_user(self.user2).access_token)
 
     def test_job_posting_crud(self):
         postings_url = "/api/job-postings/"
@@ -176,13 +173,7 @@ class ExtractTests(APITestCase):
             email="extractor@example.com",
             password="securePass123!",
         )
-        login_url = reverse("auth-token-obtain")
-        res = self.client.post(
-            login_url,
-            {"email": "extractor@example.com", "password": "securePass123!"},
-            format="json",
-        )
-        self.token = res.data["access"]
+        self.token = str(RefreshToken.for_user(self.user).access_token)
 
     def _auth(self):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
@@ -307,13 +298,7 @@ class Phase4AITests(APITestCase):
             email="ai_user@example.com",
             password="securePass123!",
         )
-        login_url = reverse("auth-token-obtain")
-        res = self.client.post(
-            login_url,
-            {"email": "ai_user@example.com", "password": "securePass123!"},
-            format="json",
-        )
-        self.token = res.data["access"]
+        self.token = str(RefreshToken.for_user(self.user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
 
     def test_generate_jd_endpoint(self):
@@ -372,13 +357,7 @@ class Phase5OAuthAndSendingTests(APITestCase):
             email="oauth_user@example.com",
             password="securePass123!",
         )
-        login_url = reverse("auth-token-obtain")
-        res = self.client.post(
-            login_url,
-            {"email": "oauth_user@example.com", "password": "securePass123!"},
-            format="json",
-        )
-        self.token = res.data["access"]
+        self.token = str(RefreshToken.for_user(self.user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
 
     def test_oauth_connect_endpoint(self):
@@ -507,13 +486,7 @@ class Phase6ReplyPollingTests(APITestCase):
             email="poll_user@example.com",
             password="securePass123!",
         )
-        login_url = reverse("auth-token-obtain")
-        res = self.client.post(
-            login_url,
-            {"email": "poll_user@example.com", "password": "securePass123!"},
-            format="json",
-        )
-        self.token = res.data["access"]
+        self.token = str(RefreshToken.for_user(self.user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
 
     def test_application_detail_nested_logs(self):
@@ -616,7 +589,223 @@ class Phase6ReplyPollingTests(APITestCase):
             self.assertEqual(result2, "No threads to check.")
             self.assertEqual(ReplyLog.objects.filter(job_application=app).count(), 1)
 
+    def test_check_replies_endpoint(self):
+        """The on-demand endpoint records replies without Celery Beat."""
+        from unittest.mock import patch
+        from api.models import EmailAccount, EmailLog, JobApplication, ReplyLog
 
+        EmailAccount.objects.create(
+            user=self.user,
+            email_address="poll_user@example.com",
+            provider="gmail",
+            access_token="token",
+            refresh_token="refresh",
+        )
+        app = JobApplication.objects.create(
+            user=self.user,
+            company_name="Acme",
+            role_title="Engineer",
+            status="sent",
+        )
+        EmailLog.objects.create(job_application=app, subject="Hello", body="Hi", gmail_thread_id="thread_1")
+
+        messages = [
+            {"id": "sent_1", "from": "user1@example.com"},
+            {"id": "reply_1", "snippet": "Interested", "body": "Let's talk.", "from": "hr@acme.com"},
+        ]
+        with patch("services.gmail_service.get_thread_messages", return_value=messages):
+            res = self.client.post(f"/api/job-applications/{app.id}/check-replies/")
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["new_replies"], 1)
+        self.assertEqual(ReplyLog.objects.filter(job_application=app).count(), 1)
+
+
+class Phase7IntegrationTests(APITestCase):
+    """Phase 7: End-to-end flow integration tests, security audit, and input validation."""
+
+    def setUp(self):
+        self.user1 = User.objects.create_user(
+            username="applicant@example.com",
+            email="applicant@example.com",
+            password="securePass123!",
+        )
+        self.user2 = User.objects.create_user(
+            username="poster@example.com",
+            email="poster@example.com",
+            password="securePass123!",
+        )
+
+        self.token1 = str(RefreshToken.for_user(self.user1).access_token)
+        self.token2 = str(RefreshToken.for_user(self.user2).access_token)
+
+    def _auth(self, token):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+    def test_e2e_applicant_flow(self):
+        """README §5: Signup -> Extract -> Create -> Draft -> Send -> Poll -> Detail."""
+        from unittest.mock import patch
+        from api.models import EmailAccount, EmailLog, JobApplication, ReplyLog
+        from api.tasks import poll_replies
+
+        self._auth(self.token1)
+
+        # 1. Extract text and email from paste
+        jd_text_input = "We are seeking a Python Engineer at Acme Corp. Contact recruiter at hr@acmecorp.com for details."
+        res_extract = self.client.post("/api/job-applications/extract/", {"text": jd_text_input}, format="json")
+        self.assertEqual(res_extract.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_extract.data["recruiter_email"], "hr@acmecorp.com")
+
+        # 2. Create JobApplication
+        app_data = {
+            "company_name": "Acme Corp",
+            "role_title": "Python Engineer",
+            "jd_text": res_extract.data["jd_text"],
+            "recruiter_email": res_extract.data["recruiter_email"],
+        }
+        res_create = self.client.post("/api/job-applications/", app_data, format="json")
+        self.assertEqual(res_create.status_code, status.HTTP_201_CREATED)
+        app_id = res_create.data["id"]
+
+        # 3. Draft email with AI
+        res_draft = self.client.post(f"/api/job-applications/{app_id}/draft-email/", format="json")
+        self.assertEqual(res_draft.status_code, status.HTTP_200_OK)
+        subject = res_draft.data["subject"]
+        body = res_draft.data["body"]
+
+        # 4. Connect Gmail account
+        account = EmailAccount.objects.create(
+            user=self.user1,
+            provider="gmail",
+            email_address="applicant@example.com",
+        )
+        account.access_token = "access"
+        account.refresh_token = "refresh"
+        account.save()
+
+        # 5. Send outreach email
+        with patch("services.gmail_service.send_email") as mock_send:
+            mock_send.return_value = "thread_e2e_100"
+            res_send = self.client.post(
+                f"/api/job-applications/{app_id}/send-email/",
+                {"subject": subject, "body": body},
+                format="json",
+            )
+            self.assertEqual(res_send.status_code, status.HTTP_200_OK)
+            self.assertEqual(res_send.data["thread_id"], "thread_e2e_100")
+
+        # Verify status is sent
+        app = JobApplication.objects.get(id=app_id)
+        self.assertEqual(app.status, "sent")
+
+        # 6. Poll replies via Celery task
+        mock_messages = [
+            {"id": "sent_1", "snippet": "Sent email", "body": body, "from": "applicant@example.com"},
+            {"id": "reply_1", "snippet": "Let us talk!", "body": "Let us talk on Tuesday.", "from": "hr@acmecorp.com"},
+        ]
+        with patch("services.gmail_service.get_thread_messages") as mock_get_thread:
+            mock_get_thread.return_value = mock_messages
+            poll_result = poll_replies()
+            self.assertIn("found 1 new replies", poll_result)
+
+        # 7. Check Detail endpoint
+        res_detail = self.client.get(f"/api/job-applications/{app_id}/")
+        self.assertEqual(res_detail.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_detail.data["status"], "replied")
+        self.assertEqual(len(res_detail.data["email_logs"]), 1)
+        self.assertEqual(len(res_detail.data["reply_logs"]), 1)
+        self.assertEqual(res_detail.data["reply_logs"][0]["snippet"], "Let us talk!")
+
+    def test_e2e_job_posting_flow_and_self_application(self):
+        """README §6: AI-generate JD -> Create Posting -> List -> Self-apply warning."""
+        self._auth(self.token2)
+
+        # 1. AI-generate JD
+        gen_data = {
+            "role_title": "Fullstack Dev",
+            "seniority": "Lead",
+            "key_skills": "Django, React",
+        }
+        res_gen = self.client.post("/api/job-postings/generate-jd/", gen_data, format="json")
+        self.assertEqual(res_gen.status_code, status.HTTP_200_OK)
+        jd_text = res_gen.data["jd_text"]
+
+        # 2. Create JobPosting
+        posting_data = {
+            "company_name": "Poster Co",
+            "role_title": "Fullstack Dev",
+            "jd_text": jd_text,
+            "recruiter_email": "poster@example.com",
+            "location": "Remote",
+        }
+        res_post = self.client.post("/api/job-postings/", posting_data, format="json")
+        self.assertEqual(res_post.status_code, status.HTTP_201_CREATED)
+        posting_id = res_post.data["id"]
+
+        # 3. List postings on board
+        res_list = self.client.get("/api/job-postings/")
+        self.assertEqual(res_list.status_code, status.HTTP_200_OK)
+        self.assertTrue(any(p["id"] == posting_id for p in res_list.data))
+
+        # 4. Poster applies to their own posting (Self-application warning check)
+        self_app_data = {
+            "job_posting": posting_id,
+            "company_name": "Poster Co",
+            "role_title": "Fullstack Dev",
+            "jd_text": jd_text,
+            "recruiter_email": "poster@example.com",
+        }
+        res_self_app = self.client.post("/api/job-applications/", self_app_data, format="json")
+        self.assertEqual(res_self_app.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(res_self_app.data["is_self_application"])
+        self.assertIsNotNone(res_self_app.data["warning"])
+
+    def test_permission_scoping(self):
+        """Cross-user permission isolation audit."""
+        from api.models import JobApplication, JobPosting
+
+        # Create posting and application by user2
+        posting = JobPosting.objects.create(posted_by=self.user2, company_name="User2 Co", role_title="Dev")
+        app = JobApplication.objects.create(user=self.user2, company_name="User2 Co", role_title="Dev")
+
+        # User1 attempts to retrieve User2's application -> 404 (scoped queryset)
+        self._auth(self.token1)
+        res_app_get = self.client.get(f"/api/job-applications/{app.id}/")
+        self.assertEqual(res_app_get.status_code, status.HTTP_404_NOT_FOUND)
+
+        # User1 attempts to update User2's application -> 404
+        res_app_patch = self.client.patch(f"/api/job-applications/{app.id}/", {"status": "interview"}, format="json")
+        self.assertEqual(res_app_patch.status_code, status.HTTP_404_NOT_FOUND)
+
+        # User1 attempts to update User2's posting -> 403 Forbidden
+        res_post_patch = self.client.patch(f"/api/job-postings/{posting.id}/", {"location": "Hacked"}, format="json")
+        self.assertEqual(res_post_patch.status_code, status.HTTP_403_FORBIDDEN)
+
+        # User1 attempts to delete User2's posting -> 403 Forbidden
+        res_post_delete = self.client.delete(f"/api/job-postings/{posting.id}/")
+        self.assertEqual(res_post_delete.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_input_validation(self):
+        """File size limits and email format validation tests."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        self._auth(self.token1)
+
+        # 1. Invalid recruiter email format -> 400
+        res_bad_email = self.client.post("/api/job-postings/", {
+            "company_name": "Test",
+            "role_title": "Dev",
+            "recruiter_email": "not-an-email",
+        }, format="json")
+        self.assertEqual(res_bad_email.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("recruiter_email", res_bad_email.data)
+
+        # 2. File size > 5MB -> 400
+        large_content = b"a" * (6 * 1024 * 1024)  # 6MB
+        large_file = SimpleUploadedFile("big.pdf", large_content, content_type="application/pdf")
+        res_big_file = self.client.post("/api/job-applications/extract/", {"file": large_file}, format="multipart")
+        self.assertEqual(res_big_file.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("File too large", res_big_file.data["detail"])
 
 
 

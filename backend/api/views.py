@@ -12,10 +12,17 @@ import logging
 from django.conf import settings
 from django.http import HttpResponseRedirect
 from rest_framework import status, viewsets
-from rest_framework.decorators import action, api_view, parser_classes, permission_classes
+from rest_framework.decorators import (
+    action,
+    api_view,
+    parser_classes,
+    permission_classes,
+    throttle_classes,
+)
 from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
@@ -88,6 +95,7 @@ def test_protected(request):
 
 @api_view(["POST"])
 @parser_classes([MultiPartParser, JSONParser])
+@throttle_classes([ScopedRateThrottle])
 def extract_jd(request):
     """Extract JD text from raw text or an uploaded file, plus detect email.
 
@@ -125,6 +133,9 @@ def extract_jd(request):
         },
         status=status.HTTP_200_OK,
     )
+
+
+extract_jd.throttle_scope = "extract"
 
 
 # ── Gmail OAuth (Phase 5) ────────────────────────────────────
@@ -280,6 +291,15 @@ class JobPostingViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("You can only delete your own postings.")
         instance.delete()
 
+    def get_throttles(self):
+        if self.action == "create":
+            self.throttle_scope = "create_posting"
+            return [ScopedRateThrottle()]
+        elif self.action == "generate_jd":
+            self.throttle_scope = "generate_jd"
+            return [ScopedRateThrottle()]
+        return super().get_throttles()
+
     @action(detail=False, methods=["post"], url_path="generate-jd")
     def generate_jd(self, request):
         """AI-generate a job description from structured fields."""
@@ -331,6 +351,12 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
     """
 
     serializer_class = JobApplicationSerializer
+
+    def get_throttles(self):
+        if self.action == "draft_email":
+            self.throttle_scope = "draft_email"
+            return [ScopedRateThrottle()]
+        return super().get_throttles()
 
     def get_serializer_class(self):
         """Use the detail serializer (with timeline data) for retrieve."""
@@ -481,3 +507,27 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK,
         )
+
+    @action(detail=True, methods=["post"], url_path="check-replies")
+    def check_replies(self, request, pk=None):
+        """Check this application's sent Gmail threads for recruiter replies."""
+        from api.tasks import _check_thread_for_replies
+
+        app = self.get_object()
+        email_account = EmailAccount.objects.filter(user=request.user).order_by("-connected_at").first()
+        if not email_account:
+            return Response(
+                {"detail": "No connected email account. Please connect your Gmail first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            replies_found = sum(
+                _check_thread_for_replies(email_account, email_log)
+                for email_log in app.email_logs.filter(gmail_thread_id__gt="")
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        app.refresh_from_db(fields=["status"])
+        return Response({"new_replies": replies_found, "status": app.status})
