@@ -217,4 +217,45 @@ export async function resendVerificationCode(accessToken) {
   throw new Error(data.detail || "Failed to resend code");
 }
 
+// ── Phase 9 helpers ───────────────────────────────────────────
+
+/**
+ * Get the current user's active resume metadata.
+ * @param {string} accessToken
+ * @returns {Promise<{id: number, original_filename: string, uploaded_at: string}|null>}
+ */
+export async function getResume(accessToken) {
+  const res = await authFetch("/resume/", {}, accessToken);
+  if (res.status === 404) return null;
+  if (res.ok) return await res.json();
+  throw new Error("Failed to fetch resume");
+}
+
+/**
+ * Upload (or replace) the user's active resume.
+ * @param {File} file - The resume file to upload
+ * @param {string} accessToken
+ * @returns {Promise<{id: number, original_filename: string, uploaded_at: string}>}
+ */
+export async function uploadResume(file, accessToken) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await authFetchMultipart("/resume/", formData, accessToken);
+  const data = await res.json().catch(() => ({}));
+  if (res.ok || res.status === 201) return data;
+  throw new Error(data.detail || "Failed to upload resume");
+}
+
+/**
+ * Delete the user's active resume.
+ * @param {string} accessToken
+ * @returns {Promise<void>}
+ */
+export async function deleteResume(accessToken) {
+  const res = await authFetch("/resume/", { method: "DELETE" }, accessToken);
+  if (res.ok) return;
+  const data = await res.json().catch(() => ({}));
+  throw new Error(data.detail || "Failed to delete resume");
+}
+
 export default apiFetch;

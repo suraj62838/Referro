@@ -166,6 +166,11 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
+# ---------- Media (Phase 9: resume uploads) ----------
+# Local /media in dev; switch to S3/object storage in production.
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ---------- Google OAuth (Phase 5) ----------

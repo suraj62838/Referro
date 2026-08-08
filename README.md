@@ -58,8 +58,10 @@ update the relevant section in the same PR/commit that changes behavior.
   meaningful action (posting, applying, sending) until verified — see
   section 3/4. Don't silently allow full access pre-verification.
 - **One resume per user, always current.** Uploading a new resume replaces
-  the active one; it isn't a per-application choice. Every outreach email
-  and reply attaches whatever the currently active resume is at send time.
+  the active one (purging the old file from storage); it isn't a per-application choice.
+  Every outreach email and reply attaches whatever the currently active resume is at send time.
+  If sending an email when no resume is uploaded, sending proceeds without an attachment
+  and `EmailLog.resume_attached` is set to null.
 - **Replies stay in the same Gmail thread.** A reply to a recruiter is sent
   using the original `gmail_thread_id`, not a new email — this is what keeps
   the whole exchange visible as one conversation in both inboxes.

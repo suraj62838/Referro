@@ -1013,5 +1013,158 @@ class Phase8EmailVerificationTests(APITestCase):
         self.assertIn("Please wait", res.data["detail"])
 
 
+class Phase9ResumeTests(APITestCase):
+    """Phase 9: Tests for resume upload, replace, delete, and email auto-attachment."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="resume_user@example.com",
+            email="resume_user@example.com",
+            password="securePass123!",
+        )
+        self.user.profile.is_verified = True
+        self.user.profile.save()
+        self.token = str(RefreshToken.for_user(self.user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+
+    def test_get_resume_404_when_none_uploaded(self):
+        """GET /api/resume/ returns 404 if no resume has been uploaded."""
+        res = self.client.get("/api/resume/")
+        self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_upload_and_get_resume(self):
+        """POST /api/resume/ uploads PDF, GET /api/resume/ returns metadata."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        dummy_pdf = SimpleUploadedFile(
+            "my_resume.pdf",
+            b"%PDF-1.4 dummy content",
+            content_type="application/pdf",
+        )
+        res = self.client.post("/api/resume/", {"file": dummy_pdf}, format="multipart")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data["original_filename"], "my_resume.pdf")
+
+        # GET should return the metadata
+        get_res = self.client.get("/api/resume/")
+        self.assertEqual(get_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(get_res.data["original_filename"], "my_resume.pdf")
+
+    def test_upload_invalid_file_type(self):
+        """Uploading an unallowed file type returns 400."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        txt_file = SimpleUploadedFile(
+            "resume.txt", b"plain text", content_type="text/plain"
+        )
+        res = self.client.post("/api/resume/", {"file": txt_file}, format="multipart")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Unsupported file type", res.data["detail"])
+
+    def test_upload_exceeds_size_limit(self):
+        """Uploading a file > 5MB returns 400."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        large_bytes = b"0" * (5 * 1024 * 1024 + 1)
+        large_file = SimpleUploadedFile(
+            "big_resume.pdf", large_bytes, content_type="application/pdf"
+        )
+        res = self.client.post("/api/resume/", {"file": large_file}, format="multipart")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("File too large", res.data["detail"])
+
+    def test_replace_resume_deletes_old_file(self):
+        """Uploading a second resume replaces the old one and deletes the old file."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from api.models import Resume
+
+        pdf1 = SimpleUploadedFile("resume_v1.pdf", b"%PDF-1.4 v1", content_type="application/pdf")
+        self.client.post("/api/resume/", {"file": pdf1}, format="multipart")
+
+        r1 = Resume.objects.filter(user=self.user).first()
+        self.assertIsNotNone(r1)
+        old_file_path = r1.file.path
+
+        # Upload second resume
+        pdf2 = SimpleUploadedFile("resume_v2.pdf", b"%PDF-1.4 v2", content_type="application/pdf")
+        res2 = self.client.post("/api/resume/", {"file": pdf2}, format="multipart")
+        self.assertEqual(res2.status_code, status.HTTP_201_CREATED)
+
+        # Confirm DB has only 1 resume for user
+        resumes = Resume.objects.filter(user=self.user)
+        self.assertEqual(resumes.count(), 1)
+        self.assertEqual(resumes.first().original_filename, "resume_v2.pdf")
+
+        # Confirm old physical file was purged from disk
+        import os
+        self.assertFalse(os.path.exists(old_file_path))
+
+    def test_delete_resume(self):
+        """DELETE /api/resume/ removes the resume record and file."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from api.models import Resume
+        import os
+
+        pdf = SimpleUploadedFile("delete_me.pdf", b"%PDF-1.4 to delete", content_type="application/pdf")
+        self.client.post("/api/resume/", {"file": pdf}, format="multipart")
+
+        file_path = Resume.objects.filter(user=self.user).first().file.path
+
+        res_del = self.client.delete("/api/resume/")
+        self.assertEqual(res_del.status_code, status.HTTP_200_OK)
+
+        self.assertEqual(Resume.objects.filter(user=self.user).count(), 0)
+        self.assertFalse(os.path.exists(file_path))
+
+    def test_send_email_attaches_active_resume(self):
+        """send-email automatically attaches the active resume and links it on EmailLog."""
+        from unittest.mock import patch
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from api.models import EmailAccount, EmailLog, JobApplication, Resume
+
+        # 1. Upload resume
+        pdf = SimpleUploadedFile("attached_resume.pdf", b"%PDF-1.4 content", content_type="application/pdf")
+        self.client.post("/api/resume/", {"file": pdf}, format="multipart")
+        active_resume = Resume.objects.filter(user=self.user).first()
+
+        # 2. Setup connected email account and application
+        EmailAccount.objects.create(
+            user=self.user,
+            email_address="sender@example.com",
+            provider="gmail",
+            access_token="token",
+            refresh_token="refresh",
+        )
+        app = JobApplication.objects.create(
+            user=self.user,
+            company_name="Stripe",
+            role_title="API Dev",
+            recruiter_email="hr@stripe.com",
+            status="sent",
+        )
+
+        # 3. Send email
+        with patch("services.gmail_service.send_email") as mock_send:
+            mock_send.return_value = "thread_resume_1"
+
+            res = self.client.post(
+                f"/api/job-applications/{app.id}/send-email/",
+                {"subject": "Application", "body": "Please see attached resume."},
+                format="json",
+            )
+            self.assertEqual(res.status_code, status.HTTP_200_OK)
+            self.assertEqual(res.data["resume_attached"], "attached_resume.pdf")
+
+            # Verify send_email was called with attachment_data
+            mock_send.assert_called_once()
+            call_kwargs = mock_send.call_args.kwargs
+            self.assertEqual(call_kwargs["attachment_filename"], "attached_resume.pdf")
+            self.assertEqual(call_kwargs["attachment_data"], b"%PDF-1.4 content")
+
+            # Verify EmailLog records resume_attached
+            log = EmailLog.objects.get(job_application=app)
+            self.assertEqual(log.resume_attached, active_resume)
+
+
 
 

@@ -3,6 +3,7 @@ Admin registrations for the API app.
 Phase 2: Register JobPosting, JobApplication, EmailLog, ReplyLog.
 Phase 5: Register EmailAccount.
 Phase 8: Register UserProfile, EmailVerificationCode.
+Phase 9: Register Resume.
 """
 
 from django.contrib import admin
@@ -14,6 +15,7 @@ from .models import (
     JobApplication,
     JobPosting,
     ReplyLog,
+    Resume,
     UserProfile,
 )
 
@@ -67,3 +69,8 @@ class EmailVerificationCodeAdmin(admin.ModelAdmin):
     search_fields = ("user__email",)
 
 
+@admin.register(Resume)
+class ResumeAdmin(admin.ModelAdmin):
+    list_display = ("user", "original_filename", "uploaded_at")
+    list_filter = ("uploaded_at",)
+    search_fields = ("user__email", "original_filename")

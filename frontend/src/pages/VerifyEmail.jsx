@@ -217,7 +217,7 @@ export default function VerifyEmail() {
             <strong style={{ color: "var(--ink)" }}>{user?.email || "your email address"}</strong>.
             <br />
             <span style={{ fontSize: 13, color: "var(--ink-soft)", opacity: 0.85, marginTop: 6, display: "block" }}>
-              Please check your <strong>Spam/Junk folder</strong> if it doesn't appear in your Inbox. (In local dev mode, the code is also printed in your backend server terminal).
+              Please check your <strong>Spam/Junk folder</strong> if it doesn't appear in your Inbox.
             </span>
           </p>
 

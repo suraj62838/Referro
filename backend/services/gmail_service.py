@@ -12,6 +12,8 @@ Gmail-only for this phase. Outlook deferred.
 import base64
 import json
 import logging
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from django.conf import settings
@@ -151,7 +153,14 @@ def get_credentials(email_account) -> Credentials:
     return creds
 
 
-def send_email(email_account, to: str, subject: str, body: str) -> str:
+def send_email(
+    email_account,
+    to: str,
+    subject: str,
+    body: str,
+    attachment_data: bytes | None = None,
+    attachment_filename: str | None = None,
+) -> str:
     """Send an email via the Gmail API using the user's connected account.
 
     Args:
@@ -159,6 +168,8 @@ def send_email(email_account, to: str, subject: str, body: str) -> str:
         to: Recipient email address.
         subject: Email subject line.
         body: Email body (plain text).
+        attachment_data: Raw bytes of the file to attach (or None).
+        attachment_filename: The filename for the attachment header (or None).
 
     Returns:
         The Gmail thread ID of the sent message.
@@ -169,10 +180,26 @@ def send_email(email_account, to: str, subject: str, body: str) -> str:
     creds = get_credentials(email_account)
     service = build("gmail", "v1", credentials=creds, cache_discovery=False)
 
-    message = MIMEText(body)
-    message["to"] = to
-    message["from"] = email_account.email_address
-    message["subject"] = subject
+    if attachment_data and attachment_filename:
+        # Build multipart message with attachment
+        message = MIMEMultipart()
+        message["to"] = to
+        message["from"] = email_account.email_address
+        message["subject"] = subject
+
+        message.attach(MIMEText(body))
+
+        attachment = MIMEApplication(attachment_data)
+        attachment.add_header(
+            "Content-Disposition", "attachment", filename=attachment_filename
+        )
+        message.attach(attachment)
+    else:
+        # Plain text message (no attachment)
+        message = MIMEText(body)
+        message["to"] = to
+        message["from"] = email_account.email_address
+        message["subject"] = subject
 
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
 

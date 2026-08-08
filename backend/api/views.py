@@ -5,6 +5,7 @@ Phase 2: Added JobPostingViewSet and JobApplicationViewSet (full CRUD).
 Phase 3: Added extract_jd endpoint for JD text/file extraction + email detection.
 Phase 5: Added Gmail OAuth connect/callback, email-accounts/me, send-email action.
 Phase 8: Added verify_email, resend_code; signup now sends 6-digit code.
+Phase 9: Added resume_view (GET/POST/DELETE); send_email attaches active resume.
 """
 
 import json
@@ -36,12 +37,13 @@ from services.text_extractor import (
     extract_text_from_file,
 )
 
-from .models import EmailAccount, EmailLog, EmailVerificationCode, JobApplication, JobPosting
+from .models import EmailAccount, EmailLog, EmailVerificationCode, JobApplication, JobPosting, Resume
 from .serializers import (
     JobApplicationDetailSerializer,
     JobApplicationSerializer,
     JobPostingSerializer,
     MyTokenObtainPairSerializer,
+    ResumeSerializer,
     SignupSerializer,
 )
 
@@ -213,6 +215,86 @@ def resend_code(request):
 
 
 resend_code.throttle_scope = "resend_code"
+
+
+# ── Resume management (Phase 9) ─────────────────────────────────
+
+# Allowed content types for resume uploads
+RESUME_ALLOWED_TYPES = {
+    "application/pdf",
+    "application/msword",                                        # .doc
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+}
+RESUME_MAX_SIZE = 5 * 1024 * 1024  # 5 MB
+
+
+@api_view(["GET", "POST", "DELETE"])
+@parser_classes([MultiPartParser, JSONParser])
+def resume_view(request):
+    """Manage the user's active resume.
+
+    GET    — Return current resume metadata (or 404 if none).
+    POST   — Upload / replace the active resume (multipart ``file`` field).
+    DELETE — Remove the active resume.
+    """
+    if request.method == "GET":
+        resume = (
+            Resume.objects.filter(user=request.user)
+            .order_by("-uploaded_at")
+            .first()
+        )
+        if not resume:
+            return Response(
+                {"detail": "No resume uploaded yet."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(ResumeSerializer(resume).data)
+
+    if request.method == "POST":
+        uploaded = request.FILES.get("file")
+        if not uploaded:
+            return Response(
+                {"detail": "A file is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate content type
+        if uploaded.content_type not in RESUME_ALLOWED_TYPES:
+            return Response(
+                {"detail": f"Unsupported file type: {uploaded.content_type}. Allowed: PDF, DOC, DOCX."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate size
+        if uploaded.size > RESUME_MAX_SIZE:
+            return Response(
+                {"detail": f"File too large ({uploaded.size} bytes). Maximum is 5 MB."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Delete any existing resume(s) for this user (file + DB row)
+        for old in Resume.objects.filter(user=request.user):
+            old.delete()  # custom delete() purges the physical file
+
+        resume = Resume.objects.create(
+            user=request.user,
+            file=uploaded,
+            original_filename=uploaded.name,
+        )
+        return Response(ResumeSerializer(resume).data, status=status.HTTP_201_CREATED)
+
+    # DELETE
+    deleted_count = 0
+    for old in Resume.objects.filter(user=request.user):
+        old.delete()
+        deleted_count += 1
+
+    if deleted_count == 0:
+        return Response(
+            {"detail": "No resume to delete."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    return Response({"detail": "Resume deleted."}, status=status.HTTP_200_OK)
 
 
 # ── JD extraction (Phase 3) ───────────────────────────────────
@@ -566,6 +648,7 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
 
         Expects ``{"subject": "...", "body": "..."}`` in the request body.
         Creates an EmailLog, updates status to sent, returns the thread id.
+        Phase 9: auto-attaches the user's active resume if one exists.
         """
         from services.gmail_service import send_email as gmail_send
 
@@ -599,12 +682,33 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Get the user's active resume (if any) for attachment
+        active_resume = (
+            Resume.objects.filter(user=request.user)
+            .order_by("-uploaded_at")
+            .first()
+        )
+
+        attachment_data = None
+        attachment_filename = None
+        if active_resume and active_resume.file:
+            try:
+                active_resume.file.open("rb")
+                attachment_data = active_resume.file.read()
+                attachment_filename = active_resume.original_filename
+                active_resume.file.close()
+            except Exception as exc:
+                logger.warning("Could not read resume file for attachment: %s", exc)
+                active_resume = None  # proceed without attachment
+
         try:
             thread_id = gmail_send(
                 email_account,
                 to=app.recruiter_email,
                 subject=subject,
                 body=body,
+                attachment_data=attachment_data,
+                attachment_filename=attachment_filename,
             )
         except ValueError as exc:
             return Response(
@@ -618,6 +722,7 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
             subject=subject,
             body=body,
             gmail_thread_id=thread_id,
+            resume_attached=active_resume,
         )
 
         # Update application status
@@ -629,6 +734,7 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
                 "success": True,
                 "thread_id": thread_id,
                 "status": "sent",
+                "resume_attached": active_resume.original_filename if active_resume else None,
             },
             status=status.HTTP_200_OK,
         )

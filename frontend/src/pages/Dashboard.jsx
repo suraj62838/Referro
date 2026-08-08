@@ -9,6 +9,7 @@ import { useAuth } from "../auth/AuthContext.jsx";
 import { authFetch } from "../api.js";
 import { TopBar, StatusPill } from "../components/ui.jsx";
 import AppLayout from "../components/AppLayout.jsx";
+import ResumeSection from "../components/ResumeSection.jsx";
 import {
   Plus,
   Building2,
@@ -100,6 +101,9 @@ export default function Dashboard() {
             </button>
           }
         />
+
+        {/* Resume section */}
+        <ResumeSection />
 
         {/* Status summary cards */}
         <div

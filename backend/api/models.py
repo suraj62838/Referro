@@ -4,6 +4,7 @@ Phase 2: JobPosting, JobApplication with full CRUD.
          EmailLog, ReplyLog — schema only, no logic yet.
 Phase 5: EmailAccount with encrypted OAuth token storage.
 Phase 8: UserProfile (is_verified), EmailVerificationCode.
+Phase 9: Resume (one active per user, upload/replace/delete).
 """
 
 from django.conf import settings
@@ -56,6 +57,42 @@ class EmailVerificationCode(models.Model):
 
     def __str__(self):
         return f"Code({self.user.username}, used={self.is_used})"
+
+
+# ── Phase 9: Resume ───────────────────────────────────────────
+
+
+def resume_upload_path(instance, filename):
+    """Upload resumes to media/resumes/<user_id>/<filename>."""
+    return f"resumes/{instance.user_id}/{filename}"
+
+
+class Resume(models.Model):
+    """One active resume per user. Uploading a new one replaces the old.
+    The physical file is deleted when the record is deleted."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="resumes",
+    )
+    file = models.FileField(upload_to=resume_upload_path)
+    original_filename = models.CharField(max_length=255)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-uploaded_at"]
+
+    def __str__(self):
+        return f"Resume({self.user.username}, {self.original_filename})"
+
+    def delete(self, *args, **kwargs):
+        """Delete the physical file from storage before removing the DB row."""
+        if self.file:
+            storage = self.file.storage
+            if storage.exists(self.file.name):
+                storage.delete(self.file.name)
+        super().delete(*args, **kwargs)
 
 
 def _fernet():
@@ -140,7 +177,8 @@ class JobApplication(models.Model):
 
 class EmailLog(models.Model):
     """Record of an outreach email sent through the user's connected mailbox.
-    Schema only for Phase 2 — sending logic added in Phase 5."""
+    Schema only for Phase 2 — sending logic added in Phase 5.
+    Phase 9: resume_attached tracks which resume was attached at send time."""
 
     job_application = models.ForeignKey(
         JobApplication,
@@ -149,6 +187,14 @@ class EmailLog(models.Model):
     )
     subject = models.CharField(max_length=500)
     body = models.TextField()
+    resume_attached = models.ForeignKey(
+        "Resume",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="email_logs",
+        help_text="Which resume was attached at send time (null = none).",
+    )
     sent_at = models.DateTimeField(auto_now_add=True)
     gmail_thread_id = models.CharField(max_length=255, blank=True, default="")
 

@@ -4,6 +4,7 @@ Phase 1: Auth serializers (SignupSerializer, MyTokenObtainPairSerializer).
 Phase 2: Added JobPostingSerializer, JobApplicationSerializer.
 Phase 6: Added EmailLogSerializer, ReplyLogSerializer, JobApplicationDetailSerializer.
 Phase 8: Auth serializers now include is_verified.
+Phase 9: Added ResumeSerializer; updated EmailLogSerializer with resume_attached.
 """
 
 from django.contrib.auth.models import User
@@ -12,7 +13,7 @@ from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import EmailLog, JobApplication, JobPosting, ReplyLog
+from .models import EmailLog, JobApplication, JobPosting, ReplyLog, Resume
 
 
 # ── Auth serializers ──────────────────────────────────────────
@@ -162,9 +163,19 @@ class EmailLogSerializer(serializers.ModelSerializer):
             "id",
             "subject",
             "body",
+            "resume_attached",
             "sent_at",
             "gmail_thread_id",
         ]
+        read_only_fields = fields
+
+
+class ResumeSerializer(serializers.ModelSerializer):
+    """Read-only serializer for resume metadata."""
+
+    class Meta:
+        model = Resume
+        fields = ["id", "original_filename", "uploaded_at"]
         read_only_fields = fields
 
 
