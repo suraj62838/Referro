@@ -179,4 +179,42 @@ export async function updateApplicationStatus(appId, newStatus, accessToken) {
   throw new Error(errData.detail || "Failed to update status");
 }
 
+// ── Phase 8 helpers ───────────────────────────────────────────
+
+/**
+ * Verify account using 6-digit email code.
+ * @param {string} code
+ * @param {string} accessToken
+ * @returns {Promise<object>}
+ */
+export async function verifyEmail(code, accessToken) {
+  const res = await authFetch(
+    "/auth/verify-email/",
+    {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    },
+    accessToken
+  );
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) return data;
+  throw new Error(data.detail || "Verification failed");
+}
+
+/**
+ * Request a new verification code.
+ * @param {string} accessToken
+ * @returns {Promise<object>}
+ */
+export async function resendVerificationCode(accessToken) {
+  const res = await authFetch(
+    "/auth/resend-code/",
+    { method: "POST" },
+    accessToken
+  );
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) return data;
+  throw new Error(data.detail || "Failed to resend code");
+}
+
 export default apiFetch;

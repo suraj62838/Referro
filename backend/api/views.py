@@ -4,13 +4,17 @@ Phase 1: Added user auth views (signup, custom token view).
 Phase 2: Added JobPostingViewSet and JobApplicationViewSet (full CRUD).
 Phase 3: Added extract_jd endpoint for JD text/file extraction + email detection.
 Phase 5: Added Gmail OAuth connect/callback, email-accounts/me, send-email action.
+Phase 8: Added verify_email, resend_code; signup now sends 6-digit code.
 """
 
 import json
 import logging
+import random
+from datetime import timedelta
 
 from django.conf import settings
 from django.http import HttpResponseRedirect
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import (
     action,
@@ -20,7 +24,7 @@ from rest_framework.decorators import (
     throttle_classes,
 )
 from rest_framework.parsers import JSONParser, MultiPartParser
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
@@ -32,7 +36,7 @@ from services.text_extractor import (
     extract_text_from_file,
 )
 
-from .models import EmailAccount, EmailLog, JobApplication, JobPosting
+from .models import EmailAccount, EmailLog, EmailVerificationCode, JobApplication, JobPosting
 from .serializers import (
     JobApplicationDetailSerializer,
     JobApplicationSerializer,
@@ -60,10 +64,16 @@ def health_check(request):
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def signup(request):
-    """Register a new user and return JWT access/refresh tokens."""
+    """Register a new user with is_verified=False, send 6-digit code."""
     serializer = SignupSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.save()
+
+        # Generate and send verification code
+        code = _generate_verification_code(user)
+        from services.email_sender import send_verification_code
+        send_verification_code(user.email, code)
+
         refresh = RefreshToken.for_user(user)
         return Response(
             {
@@ -71,6 +81,7 @@ def signup(request):
                 "refresh": str(refresh),
                 "user": {
                     "email": user.email,
+                    "is_verified": False,
                 },
             },
             status=status.HTTP_201_CREATED,
@@ -85,9 +96,123 @@ class MyTokenObtainPairView(TokenObtainPairView):
 
 
 @api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def test_protected(request):
     """Simple protected endpoint for testing authentication."""
     return Response({"message": "authenticated"})
+
+
+def _generate_verification_code(user):
+    """Create a 6-digit verification code with 10-minute expiry.
+    Returns the code string."""
+    code = f"{random.randint(0, 999999):06d}"
+    EmailVerificationCode.objects.create(
+        user=user,
+        code=code,
+        expires_at=timezone.now() + timedelta(minutes=10),
+    )
+    return code
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def verify_email(request):
+    """Check the 6-digit code and mark the user as verified.
+
+    Expects ``{"code": "123456"}``.
+    Permission is IsAuthenticated only (not IsVerifiedUser) because
+    unverified users need to reach this endpoint.
+    """
+    code = request.data.get("code", "").strip()
+    if not code:
+        return Response(
+            {"detail": "Verification code is required."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Already verified?
+    profile = request.user.profile
+    if profile.is_verified:
+        return Response(
+            {"detail": "Email is already verified."},
+            status=status.HTTP_200_OK,
+        )
+
+    # Find the latest unused, unexpired code for this user
+    verification = (
+        EmailVerificationCode.objects.filter(
+            user=request.user,
+            is_used=False,
+            expires_at__gt=timezone.now(),
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+    if verification is None:
+        return Response(
+            {"detail": "No valid verification code found. Please request a new one."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if verification.code != code:
+        return Response(
+            {"detail": "Incorrect verification code."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Mark code as used and verify the user
+    verification.is_used = True
+    verification.save(update_fields=["is_used"])
+
+    profile.is_verified = True
+    profile.save(update_fields=["is_verified"])
+
+    return Response(
+        {"detail": "Email verified successfully.", "is_verified": True},
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@throttle_classes([ScopedRateThrottle])
+def resend_code(request):
+    """Invalidate prior unused codes and issue a new one.
+
+    Rate-limited to 1 per 60 seconds. Also enforces a server-side
+    cooldown to prevent abuse even if the throttle is bypassed.
+    """
+    # Check server-side cooldown (60 seconds since last code)
+    last_code = (
+        EmailVerificationCode.objects.filter(user=request.user)
+        .order_by("-created_at")
+        .first()
+    )
+    if last_code and (timezone.now() - last_code.created_at).total_seconds() < 60:
+        remaining = 60 - int((timezone.now() - last_code.created_at).total_seconds())
+        return Response(
+            {"detail": f"Please wait {remaining} seconds before requesting a new code."},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+
+    # Invalidate all prior unused codes
+    EmailVerificationCode.objects.filter(
+        user=request.user, is_used=False
+    ).update(is_used=True)
+
+    # Generate and send a new code
+    code = _generate_verification_code(request.user)
+    from services.email_sender import send_verification_code
+    send_verification_code(request.user.email, code)
+
+    return Response(
+        {"detail": "A new verification code has been sent to your email."},
+        status=status.HTTP_200_OK,
+    )
+
+
+resend_code.throttle_scope = "resend_code"
 
 
 # ── JD extraction (Phase 3) ───────────────────────────────────

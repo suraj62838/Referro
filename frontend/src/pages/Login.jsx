@@ -141,12 +141,18 @@ export default function Login() {
     setLoading(true);
 
     try {
+      let loggedInUser;
       if (mode === "login") {
-        await login(email, password);
+        loggedInUser = await login(email, password);
       } else {
-        await signup(email, password);
+        loggedInUser = await signup(email, password);
       }
-      navigate(from, { replace: true });
+
+      if (loggedInUser && !loggedInUser.is_verified) {
+        navigate("/verify-email", { replace: true });
+      } else {
+        navigate(from, { replace: true });
+      }
     } catch (err) {
       setError(err.message || "An authentication error occurred.");
     } finally {

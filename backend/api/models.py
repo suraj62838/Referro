@@ -3,11 +3,59 @@ Data models per README.md §3.
 Phase 2: JobPosting, JobApplication with full CRUD.
          EmailLog, ReplyLog — schema only, no logic yet.
 Phase 5: EmailAccount with encrypted OAuth token storage.
+Phase 8: UserProfile (is_verified), EmailVerificationCode.
 """
 
 from django.conf import settings
 from django.db import models
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 from cryptography.fernet import Fernet
+
+
+# ── Phase 8: User profile & email verification ───────────────
+
+
+class UserProfile(models.Model):
+    """One-to-one extension of Django's User for app-specific fields.
+    Auto-created via post_save signal on User creation."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="profile",
+    )
+    is_verified = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"Profile({self.user.username}, verified={self.is_verified})"
+
+
+@receiver(post_save, sender=settings.AUTH_USER_MODEL)
+def create_user_profile(sender, instance, created, **kwargs):
+    """Auto-create a UserProfile whenever a new User is created."""
+    if created:
+        UserProfile.objects.get_or_create(user=instance)
+
+
+class EmailVerificationCode(models.Model):
+    """A 6-digit code sent to the user's email for account verification."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="verification_codes",
+    )
+    code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Code({self.user.username}, used={self.is_used})"
 
 
 def _fernet():

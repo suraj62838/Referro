@@ -13,6 +13,7 @@ import Apply from "./pages/Apply.jsx";
 import Post from "./pages/Post.jsx";
 import ApplicationDetail from "./pages/ApplicationDetail.jsx";
 import ConnectInbox from "./pages/ConnectInbox.jsx";
+import VerifyEmail from "./pages/VerifyEmail.jsx";
 
 export default function App() {
   return (
@@ -21,6 +22,14 @@ export default function App() {
       <Route path="/login" element={<Login />} />
 
       {/* Protected routes — redirect to /login if no valid JWT */}
+      <Route
+        path="/verify-email"
+        element={
+          <RequireAuth>
+            <VerifyEmail />
+          </RequireAuth>
+        }
+      />
       <Route
         path="/dashboard"
         element={

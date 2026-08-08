@@ -7,7 +7,7 @@ import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./AuthContext.jsx";
 
 export default function RequireAuth({ children }) {
-  const { isAuthenticated, loading } = useAuth();
+  const { user, isAuthenticated, loading } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -20,6 +20,16 @@ export default function RequireAuth({ children }) {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // Gate unverified users to /verify-email
+  if (!user?.is_verified && location.pathname !== "/verify-email") {
+    return <Navigate to="/verify-email" replace />;
+  }
+
+  // If already verified and trying to access /verify-email, go to dashboard
+  if (user?.is_verified && location.pathname === "/verify-email") {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return children;

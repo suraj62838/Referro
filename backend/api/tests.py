@@ -69,6 +69,11 @@ class JobCrudTests(APITestCase):
         self.user1 = User.objects.create_user(username="user1@example.com", email="user1@example.com", password="password123")
         self.user2 = User.objects.create_user(username="user2@example.com", email="user2@example.com", password="password123")
 
+        self.user1.profile.is_verified = True
+        self.user1.profile.save()
+        self.user2.profile.is_verified = True
+        self.user2.profile.save()
+
         # Generate JWT tokens directly
         self.token1 = str(RefreshToken.for_user(self.user1).access_token)
         self.token2 = str(RefreshToken.for_user(self.user2).access_token)
@@ -173,6 +178,8 @@ class ExtractTests(APITestCase):
             email="extractor@example.com",
             password="securePass123!",
         )
+        self.user.profile.is_verified = True
+        self.user.profile.save()
         self.token = str(RefreshToken.for_user(self.user).access_token)
 
     def _auth(self):
@@ -298,6 +305,8 @@ class Phase4AITests(APITestCase):
             email="ai_user@example.com",
             password="securePass123!",
         )
+        self.user.profile.is_verified = True
+        self.user.profile.save()
         self.token = str(RefreshToken.for_user(self.user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
 
@@ -357,6 +366,8 @@ class Phase5OAuthAndSendingTests(APITestCase):
             email="oauth_user@example.com",
             password="securePass123!",
         )
+        self.user.profile.is_verified = True
+        self.user.profile.save()
         self.token = str(RefreshToken.for_user(self.user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
 
@@ -486,6 +497,8 @@ class Phase6ReplyPollingTests(APITestCase):
             email="poll_user@example.com",
             password="securePass123!",
         )
+        self.user.profile.is_verified = True
+        self.user.profile.save()
         self.token = str(RefreshToken.for_user(self.user).access_token)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
 
@@ -635,6 +648,10 @@ class Phase7IntegrationTests(APITestCase):
             email="poster@example.com",
             password="securePass123!",
         )
+        self.user1.profile.is_verified = True
+        self.user1.profile.save()
+        self.user2.profile.is_verified = True
+        self.user2.profile.save()
 
         self.token1 = str(RefreshToken.for_user(self.user1).access_token)
         self.token2 = str(RefreshToken.for_user(self.user2).access_token)
@@ -806,6 +823,195 @@ class Phase7IntegrationTests(APITestCase):
         res_big_file = self.client.post("/api/job-applications/extract/", {"file": large_file}, format="multipart")
         self.assertEqual(res_big_file.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("File too large", res_big_file.data["detail"])
+
+
+class Phase8EmailVerificationTests(APITestCase):
+    """Phase 8: Tests for email verification codes, permissions, resend, and flow."""
+
+    def test_signup_creates_unverified_user_and_code(self):
+        """Signup creates user with is_verified=False and creates EmailVerificationCode."""
+        from api.models import EmailVerificationCode, UserProfile
+
+        signup_url = reverse("auth-signup")
+        data = {"email": "newuser@example.com", "password": "securePass123!"}
+        res = self.client.post(signup_url, data, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertFalse(res.data["user"]["is_verified"])
+
+        user = User.objects.get(email="newuser@example.com")
+        self.assertFalse(user.profile.is_verified)
+
+        code_obj = EmailVerificationCode.objects.filter(user=user).first()
+        self.assertIsNotNone(code_obj)
+        self.assertEqual(len(code_obj.code), 6)
+        self.assertTrue(code_obj.code.isdigit())
+        self.assertFalse(code_obj.is_used)
+
+    def test_unverified_user_blocked_from_protected_endpoint(self):
+        """Unverified user receives 403 on protected endpoint."""
+        user = User.objects.create_user(
+            username="unverified@example.com",
+            email="unverified@example.com",
+            password="securePass123!",
+        )
+        token = str(RefreshToken.for_user(user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        res = self.client.get("/api/job-postings/")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn("Email not verified", res.data["detail"])
+
+    def test_verify_with_correct_code(self):
+        """POST /api/auth/verify-email/ with correct code verifies user and unblocks endpoints."""
+        from api.models import EmailVerificationCode
+
+        signup_url = reverse("auth-signup")
+        res_signup = self.client.post(
+            signup_url,
+            {"email": "verifier@example.com", "password": "securePass123!"},
+            format="json",
+        )
+        token = res_signup.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        user = User.objects.get(email="verifier@example.com")
+        code_obj = EmailVerificationCode.objects.filter(user=user).first()
+
+        verify_url = reverse("auth-verify-email")
+        res_verify = self.client.post(verify_url, {"code": code_obj.code}, format="json")
+        self.assertEqual(res_verify.status_code, status.HTTP_200_OK)
+        self.assertTrue(res_verify.data["is_verified"])
+
+        user.refresh_from_db()
+        self.assertTrue(user.profile.is_verified)
+
+        # Now protected endpoint works
+        res_postings = self.client.get("/api/job-postings/")
+        self.assertEqual(res_postings.status_code, status.HTTP_200_OK)
+
+    def test_verify_with_wrong_code(self):
+        """Wrong code returns 400 error."""
+        signup_url = reverse("auth-signup")
+        res_signup = self.client.post(
+            signup_url,
+            {"email": "wrongcode@example.com", "password": "securePass123!"},
+            format="json",
+        )
+        token = res_signup.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        verify_url = reverse("auth-verify-email")
+        res_verify = self.client.post(verify_url, {"code": "000000"}, format="json")
+        self.assertEqual(res_verify.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Incorrect verification code", res_verify.data["detail"])
+
+    def test_verify_with_expired_code(self):
+        """Expired code returns 400 error."""
+        from datetime import timedelta
+        from django.utils import timezone
+        from api.models import EmailVerificationCode
+
+        signup_url = reverse("auth-signup")
+        res_signup = self.client.post(
+            signup_url,
+            {"email": "expired@example.com", "password": "securePass123!"},
+            format="json",
+        )
+        token = res_signup.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        user = User.objects.get(email="expired@example.com")
+        code_obj = EmailVerificationCode.objects.filter(user=user).first()
+        code_obj.expires_at = timezone.now() - timedelta(minutes=1)
+        code_obj.save()
+
+        verify_url = reverse("auth-verify-email")
+        res_verify = self.client.post(verify_url, {"code": code_obj.code}, format="json")
+        self.assertEqual(res_verify.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("No valid verification code found", res_verify.data["detail"])
+
+    def test_verify_with_used_code(self):
+        """Re-using a code returns 400 error."""
+        from api.models import EmailVerificationCode
+
+        signup_url = reverse("auth-signup")
+        res_signup = self.client.post(
+            signup_url,
+            {"email": "reused@example.com", "password": "securePass123!"},
+            format="json",
+        )
+        token = res_signup.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        user = User.objects.get(email="reused@example.com")
+        code_obj = EmailVerificationCode.objects.filter(user=user).first()
+
+        verify_url = reverse("auth-verify-email")
+        # First use
+        res1 = self.client.post(verify_url, {"code": code_obj.code}, format="json")
+        self.assertEqual(res1.status_code, status.HTTP_200_OK)
+
+        # Un-verify user profile to test reusing the code
+        user.profile.is_verified = False
+        user.profile.save()
+
+        # Second use attempt
+        res2 = self.client.post(verify_url, {"code": code_obj.code}, format="json")
+        self.assertEqual(res2.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_resend_code_invalidates_old_codes(self):
+        """Resend code invalidates prior unused codes and generates new code."""
+        from datetime import timedelta
+        from django.utils import timezone
+        from api.models import EmailVerificationCode
+
+        signup_url = reverse("auth-signup")
+        res_signup = self.client.post(
+            signup_url,
+            {"email": "resender@example.com", "password": "securePass123!"},
+            format="json",
+        )
+        token = res_signup.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        user = User.objects.get(email="resender@example.com")
+        old_code_obj = EmailVerificationCode.objects.filter(user=user).first()
+
+        # Simulate time passing >60s so cooldown allows resend
+        old_code_obj.created_at = timezone.now() - timedelta(seconds=65)
+        old_code_obj.save()
+
+        resend_url = reverse("auth-resend-code")
+        res_resend = self.client.post(resend_url, format="json")
+        self.assertEqual(res_resend.status_code, status.HTTP_200_OK)
+
+        old_code_obj.refresh_from_db()
+        self.assertTrue(old_code_obj.is_used)
+
+        new_code_obj = (
+            EmailVerificationCode.objects.filter(user=user, is_used=False)
+            .order_by("-created_at")
+            .first()
+        )
+        self.assertIsNotNone(new_code_obj)
+        self.assertNotEqual(new_code_obj.code, old_code_obj.code)
+
+    def test_resend_code_cooldown(self):
+        """Resending within 60 seconds returns 429 rate limit."""
+        signup_url = reverse("auth-signup")
+        res_signup = self.client.post(
+            signup_url,
+            {"email": "spammer@example.com", "password": "securePass123!"},
+            format="json",
+        )
+        token = res_signup.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        resend_url = reverse("auth-resend-code")
+        res = self.client.post(resend_url, format="json")
+        self.assertEqual(res.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertIn("Please wait", res.data["detail"])
+
 
 
 

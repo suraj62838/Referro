@@ -4,6 +4,7 @@ Phase 1: Added user auth routes.
 Phase 2: Added DRF router for JobPosting and JobApplication CRUD.
 Phase 3: Added extract endpoint for JD text/file extraction.
 Phase 5: Added Gmail OAuth connect/callback and email-accounts/me.
+Phase 8: Added verify-email and resend-code.
 """
 
 from django.urls import include, path
@@ -29,6 +30,9 @@ urlpatterns = [
     ),
     path("auth/refresh/", TokenRefreshView.as_view(), name="auth-token-refresh"),
     path("auth/test-protected/", views.test_protected, name="auth-test-protected"),
+    # Phase 8: Email verification
+    path("auth/verify-email/", views.verify_email, name="auth-verify-email"),
+    path("auth/resend-code/", views.resend_code, name="auth-resend-code"),
     # JD extraction (Phase 3) — must be before router include
     path(
         "job-applications/extract/",
@@ -54,3 +58,4 @@ urlpatterns = [
     # CRUD endpoints (DRF Router)
     path("", include(router.urls)),
 ]
+

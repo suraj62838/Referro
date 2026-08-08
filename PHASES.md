@@ -167,6 +167,132 @@ surfaces them.
 
 ---
 
+---
+
+## Phase 8 — Email verification (6-digit code)
+
+**Goal:** signup sends a 6-digit code by transactional email; accounts stay
+gated until verified.
+
+> Read README.md, especially the new `EmailVerificationCode` model in
+> section 3 and the auth endpoints in section 4. Implement:
+> - On signup, create the user with `is_verified=False`, generate a 6-digit
+>   numeric code, store it on `EmailVerificationCode` with a short expiry
+>   (e.g. 10 minutes), and send it via a transactional email provider
+>   (Brevo per section 1 and 8's env vars) — do NOT reuse the user's
+>   connected Gmail/Outlook for this, they haven't connected one yet.
+> - `POST /api/auth/verify-email/` — checks the code against the latest
+>   unused, unexpired `EmailVerificationCode` for that user, marks it used
+>   and sets `User.is_verified = True`.
+> - `POST /api/auth/resend-code/` — invalidates prior unused codes for that
+>   user and issues a new one. Rate-limit this (e.g. 1 per 60 seconds) to
+>   prevent abuse.
+> - A shared DRF permission class that blocks unverified users from every
+>   endpoint except verify/resend/read-only profile info, per the note in
+>   README.md section 4.
+> - Frontend: after signup, redirect to a "check your email" screen with a
+>   6-digit code input and a resend link/cooldown timer. Block navigation
+>   past this screen until verified.
+> Test: signup → confirm unverified user can't hit a protected endpoint →
+> verify with correct code → same endpoint now works. Also test expired and
+> wrong-code cases return clear errors, not generic 500s.
+
+### Fix — Phase 8 was built against SendGrid, switch to Brevo
+
+> Phase 8 (email verification) was implemented using SendGrid, but the
+> project has switched to Brevo (formerly Sendinblue) as the transactional
+> email provider — it's free at low volume, which SendGrid isn't. README.md
+> has already been updated to reflect this (section 1 and section 8's env
+> vars now say Brevo / `BREVO_API_KEY`). Update the codebase to match:
+> - Find wherever the verification-code email is currently sent (likely a
+>   `services/`-level function or directly in the signup/resend view) and
+>   replace the SendGrid client call with Brevo's transactional email API
+>   (`POST https://api.brevo.com/v3/smtp/email`, or their official Python
+>   SDK `sib-api-v3-sdk` / `brevo-python` if you prefer a client library).
+> - Remove the `SENDGRID_API_KEY` env var and any SendGrid-specific config
+>   (settings, requirements/pyproject entry, `.env.example`), and add
+>   `BREVO_API_KEY` in its place.
+> - Keep the function signature/interface the same if other code calls it
+>   (e.g. `send_verification_email(user, code)`) — this should be a
+>   swap of the implementation, not a redesign of how/when it's called.
+> - Confirm the sender email/domain is configured on the Brevo side (Brevo
+>   requires a verified sender), and note in README.md's env vars section if
+>   an additional `BREVO_SENDER_EMAIL` variable is needed for that.
+> - Re-run the Phase 8 tests (signup → receive code → verify → protected
+>   endpoint works) against the real Brevo send, not a mock, at least once
+>   to confirm delivery actually works end to end.
+> Do not touch any other phase's code in this pass.
+
+---
+
+## Phase 9 — Resume upload and auto-attach
+
+**Goal:** user uploads a resume once, can replace it anytime, and it's
+attached automatically to every outreach email and reply.
+
+> Read README.md section 3 (`Resume` model) and section 4
+> (`/api/resume/` endpoints). Implement:
+> - `POST /api/resume/` — accepts a single file (PDF preferred; validate
+>   type and a reasonable size limit, e.g. 5MB), stores it (S3 in prod,
+>   local `/media` in dev per section 1), and replaces any existing resume
+>   for that user (delete the old file, don't just orphan it).
+> - `GET /api/resume/` — returns current resume metadata (filename,
+>   uploaded_at) or 404 if none exists yet.
+> - `DELETE /api/resume/` — removes it.
+> - Update `send-email` and `send-reply` (build the latter in Phase 10, but
+>   leave a hook here) to attach the user's active resume file to the
+>   outgoing Gmail/Outlook message, and record which `Resume` was attached
+>   on the resulting `EmailLog.resume_attached`.
+> - Decide and document in README.md whether sending without a resume
+>   uploaded should be blocked or just proceed without an attachment — pick
+>   one, don't leave it ambiguous in the code.
+> - Frontend: a resume section (in account settings or the dashboard) showing
+>   the current file with upload date, a "Replace" button that re-triggers
+>   upload, and a delete option.
+> Test: upload → send an email → confirm the attachment is present and
+> matches → replace resume → send again → confirm the new file is what's
+> attached, not the old one.
+
+---
+
+## Phase 10 — Replying to recruiters (manual + AI)
+
+**Goal:** user can reply to a `ReplyLog` from within the app, either typed
+manually or AI-drafted, and it lands in the same email thread.
+
+> Read README.md section 3 (`EmailLog` fields for replies) and section 6
+> (the reply flow). Implement:
+> - `POST /api/job-applications/{id}/draft-reply/` — takes `reply_log_id`,
+>   uses `services/ai_writer.py` with that `ReplyLog.body` plus the
+>   application's `jd_text` as context, returns a draft `{subject, body}`.
+>   Does not send or save anything.
+> - `POST /api/job-applications/{id}/send-reply/` — takes `reply_log_id`,
+>   `subject`, `body` (whether AI-drafted-then-edited or fully manual —
+>   the endpoint doesn't need to know which). Sends via the Gmail/Outlook
+>   API using the existing `gmail_thread_id` from the original `EmailLog`
+>   so it threads correctly (set the right `In-Reply-To`/`References`
+>   headers or the provider's thread parameter). Attaches the active resume
+>   if one exists. Creates a new `EmailLog` with `direction=outbound`,
+>   `type=reply`, `in_reply_to=reply_log_id`. Sets `ReplyLog.responded=True`.
+> - Frontend: on the Application detail screen, each `ReplyLog` shown in the
+>   timeline gets a "Reply" action with two entry points — "Write manually"
+>   (empty textarea) and "Draft with AI" (calls draft-reply, populates the
+>   same textarea, still editable) — both land on the same review-then-send
+>   step, consistent with every other AI-drafted content in this app.
+> Test: reply manually → confirm it appears in the same Gmail thread, not a
+> new one. Reply via AI draft → edit it → send → same thread check. Confirm
+> `ReplyLog.responded` flips to True and the UI reflects "responded" state
+> so the user doesn't reply twice by accident.
+
+
+- Paste the phase's blockquote prompt verbatim as your instruction.
+- Always let the agent read `README.md` first — don't paste model/endpoint
+  specs inline, the file is the single source of truth so it doesn't drift.
+- After each phase, update README.md yourself (or ask the agent to) if
+  reality diverged from the plan, before starting the next phase's prompt.
+
+---
+
 ## How to use this file with an agent
 
 - Paste the phase's blockquote prompt verbatim as your instruction.
@@ -174,3 +300,6 @@ surfaces them.
   specs inline, the file is the single source of truth so it doesn't drift.
 - After each phase, update README.md yourself (or ask the agent to) if
   reality diverged from the plan, before starting the next phase's prompt.
+- Phases 8–10 were added after the original v1 build (auth verification,
+  resume attachment, recruiter replies). If your codebase already finished
+  Phases 0–7, you can start directly at Phase 8.

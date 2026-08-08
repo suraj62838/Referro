@@ -2,11 +2,20 @@
 Admin registrations for the API app.
 Phase 2: Register JobPosting, JobApplication, EmailLog, ReplyLog.
 Phase 5: Register EmailAccount.
+Phase 8: Register UserProfile, EmailVerificationCode.
 """
 
 from django.contrib import admin
 
-from .models import EmailAccount, EmailLog, JobApplication, JobPosting, ReplyLog
+from .models import (
+    EmailAccount,
+    EmailLog,
+    EmailVerificationCode,
+    JobApplication,
+    JobPosting,
+    ReplyLog,
+    UserProfile,
+)
 
 
 @admin.register(JobPosting)
@@ -42,4 +51,19 @@ class EmailAccountAdmin(admin.ModelAdmin):
     search_fields = ("email_address",)
     # Tokens are encrypted — don't display them in admin
     exclude = ("_access_token", "_refresh_token")
+
+
+@admin.register(UserProfile)
+class UserProfileAdmin(admin.ModelAdmin):
+    list_display = ("user", "is_verified")
+    list_filter = ("is_verified",)
+    search_fields = ("user__email", "user__username")
+
+
+@admin.register(EmailVerificationCode)
+class EmailVerificationCodeAdmin(admin.ModelAdmin):
+    list_display = ("user", "code", "created_at", "expires_at", "is_used")
+    list_filter = ("is_used", "created_at")
+    search_fields = ("user__email",)
+
 

@@ -132,6 +132,24 @@ export function AuthProvider({ children }) {
     return data.user;
   }, []);
 
+  const confirmEmailVerification = useCallback(async (code) => {
+    const { verifyEmail: apiVerifyEmail } = await import("../api.js");
+    const data = await apiVerifyEmail(code, accessToken);
+    if (data.is_verified) {
+      setUser((prevUser) => {
+        const updated = { ...prevUser, is_verified: true };
+        sessionStorage.setItem("referro_user", JSON.stringify(updated));
+        return updated;
+      });
+    }
+    return data;
+  }, [accessToken]);
+
+  const triggerResendCode = useCallback(async () => {
+    const { resendVerificationCode } = await import("../api.js");
+    return await resendVerificationCode(accessToken);
+  }, [accessToken]);
+
   const isAuthenticated = !!accessToken;
 
   return (
@@ -142,6 +160,8 @@ export function AuthProvider({ children }) {
         loading,
         login,
         signup,
+        confirmEmailVerification,
+        triggerResendCode,
         logout,
         isAuthenticated,
       }}

@@ -99,6 +99,7 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
+        "api.permissions.IsVerifiedUser",
     ),
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
@@ -112,6 +113,7 @@ REST_FRAMEWORK = {
         "generate_jd": "10/minute",
         "draft_email": "15/minute",
         "create_posting": "20/hour",
+        "resend_code": "1/minute",
     },
 }
 
@@ -186,3 +188,24 @@ else:
     # Derive a stable 32-byte key from SECRET_KEY via SHA-256
     _digest = hashlib.sha256(SECRET_KEY.encode()).digest()
     FIELD_ENCRYPTION_KEY = base64.urlsafe_b64encode(_digest)
+
+# ---------- Brevo (Phase 8) ----------
+# Used for transactional emails (verification codes).
+# If BREVO_API_KEY is empty, email_sender.py falls back to console logging.
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
+BREVO_SENDER_EMAIL = os.getenv(
+    "BREVO_SENDER_EMAIL",
+    os.getenv("DEFAULT_FROM_EMAIL", "noreply@referro.app"),
+)
+
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+
+EMAIL_HOST = "smtp.gmail.com"
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+
+EMAIL_HOST_USER = "yourgmail@gmail.com"
+EMAIL_HOST_PASSWORD = "your_gmail_app_password"
+
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+

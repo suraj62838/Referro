@@ -3,6 +3,7 @@ DRF serializers.
 Phase 1: Auth serializers (SignupSerializer, MyTokenObtainPairSerializer).
 Phase 2: Added JobPostingSerializer, JobApplicationSerializer.
 Phase 6: Added EmailLogSerializer, ReplyLogSerializer, JobApplicationDetailSerializer.
+Phase 8: Auth serializers now include is_verified.
 """
 
 from django.contrib.auth.models import User
@@ -63,8 +64,14 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         attrs["username"] = username
         data = super().validate(attrs)
+        # Include is_verified from UserProfile
+        is_verified = False
+        profile = getattr(self.user, "profile", None)
+        if profile:
+            is_verified = profile.is_verified
         data["user"] = {
             "email": self.user.email,
+            "is_verified": is_verified,
         }
         return data
 
