@@ -177,13 +177,37 @@ class JobApplication(models.Model):
 
 class EmailLog(models.Model):
     """Record of an outreach email sent through the user's connected mailbox.
-    Schema only for Phase 2 — sending logic added in Phase 5.
-    Phase 9: resume_attached tracks which resume was attached at send time."""
+    Phase 5: sending initial outreach logic added.
+    Phase 9: resume_attached tracks which resume was attached at send time.
+    Phase 10: direction, type, in_reply_to fields added for replying."""
+
+    DIRECTION_CHOICES = [
+        ("outbound", "Outbound"),
+        ("inbound", "Inbound"),
+    ]
+    TYPE_CHOICES = [
+        ("initial", "Initial"),
+        ("reply", "Reply"),
+    ]
 
     job_application = models.ForeignKey(
         JobApplication,
         on_delete=models.CASCADE,
         related_name="email_logs",
+    )
+    direction = models.CharField(
+        max_length=10, choices=DIRECTION_CHOICES, default="outbound"
+    )
+    type = models.CharField(
+        max_length=10, choices=TYPE_CHOICES, default="initial"
+    )
+    in_reply_to = models.ForeignKey(
+        "ReplyLog",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="replies_sent",
+        help_text="Which HR reply message this outbound email responds to.",
     )
     subject = models.CharField(max_length=500)
     body = models.TextField()
@@ -202,12 +226,13 @@ class EmailLog(models.Model):
         ordering = ["-sent_at"]
 
     def __str__(self):
-        return f"Email for {self.job_application} — {self.subject[:40]}"
+        return f"Email ({self.direction}/{self.type}) for {self.job_application} — {self.subject[:40]}"
 
 
 class ReplyLog(models.Model):
     """Record of a reply detected on a sent email thread.
-    Schema only for Phase 2 — polling logic added in Phase 6."""
+    Phase 6: polling logic added.
+    Phase 10: responded field tracks if user has replied."""
 
     job_application = models.ForeignKey(
         JobApplication,
@@ -221,6 +246,10 @@ class ReplyLog(models.Model):
         help_text="Gmail message ID for deduplication during polling.",
     )
     received_at = models.DateTimeField(auto_now_add=True)
+    responded = models.BooleanField(
+        default=False,
+        help_text="Set True once the user sends a reply to this message.",
+    )
 
     class Meta:
         ordering = ["-received_at"]

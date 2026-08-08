@@ -161,6 +161,9 @@ class EmailLogSerializer(serializers.ModelSerializer):
         model = EmailLog
         fields = [
             "id",
+            "direction",
+            "type",
+            "in_reply_to",
             "subject",
             "body",
             "resume_attached",
@@ -190,6 +193,7 @@ class ReplyLogSerializer(serializers.ModelSerializer):
             "body",
             "gmail_message_id",
             "received_at",
+            "responded",
         ]
         read_only_fields = fields
 

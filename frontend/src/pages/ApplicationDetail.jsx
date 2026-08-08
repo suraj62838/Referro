@@ -2,12 +2,13 @@
  * ApplicationDetail — full detail view for a job application.
  * Phase 6: Enhanced with timeline, reply display, sent email card,
  *          and manual status update buttons.
+ * Phase 10: Replying to recruiters (manual + AI).
  */
 
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
-import { checkApplicationReplies, fetchApplicationDetail, updateApplicationStatus } from "../api.js";
+import { checkApplicationReplies, draftReply, fetchApplicationDetail, sendReply, updateApplicationStatus } from "../api.js";
 import { StatusPill } from "../components/ui.jsx";
 import AppLayout from "../components/AppLayout.jsx";
 import {
@@ -21,6 +22,8 @@ import {
   Trash2,
   Loader2,
   Mail,
+  Sparkles,
+  Edit3,
 } from "lucide-react";
 
 /* ── TimelineRow ─────────────────────────────────────────────── */
@@ -28,7 +31,6 @@ import {
 function TimelineRow({ icon: Icon, label, detail, active, highlight, isLast }) {
   return (
     <div style={{ display: "flex", gap: 14, position: "relative" }}>
-      {/* Vertical connector line */}
       {!isLast && (
         <div
           style={{
@@ -37,7 +39,7 @@ function TimelineRow({ icon: Icon, label, detail, active, highlight, isLast }) {
             top: 34,
             bottom: -14,
             width: 2,
-            background: active ? "var(--line)" : "var(--line)",
+            background: "var(--line)",
             opacity: 0.5,
           }}
         />
@@ -85,7 +87,7 @@ function TimelineRow({ icon: Icon, label, detail, active, highlight, isLast }) {
   );
 }
 
-/* ── ReplyCard ────────────────────────────────────────────────── */
+/* ── Helpers ──────────────────────────────────────────────────── */
 
 function cleanEmailText(value) {
   let text = String(value || "").trim();
@@ -134,62 +136,271 @@ function EmailText({ children }) {
   );
 }
 
-function ReplyCard({ reply }) {
+/* ── ReplyCard (Phase 10) ─────────────────────────────────────── */
+
+function ReplyCard({ reply, appId, accessToken, onReplySent, roleTitle, companyName }) {
+  const [composing, setComposing] = useState(false);
+  const [drafting, setDrafting] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [error, setError] = useState("");
+
   const message = cleanEmailText(reply.body || reply.snippet) || "(No preview available)";
 
   const formatDate = (iso) => {
     if (!iso) return "";
     const d = new Date(iso);
     return d.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
+      month: "short", day: "numeric", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
     });
+  };
+
+  const handleStartManual = () => {
+    setSubject(`Re: Application for ${roleTitle} at ${companyName}`);
+    setBody("");
+    setError("");
+    setComposing(true);
+  };
+
+  const handleStartAIDraft = async () => {
+    try {
+      setDrafting(true);
+      setError("");
+      setComposing(true);
+      setSubject(`Re: Application for ${roleTitle} at ${companyName}`);
+      setBody("");
+      const draft = await draftReply(appId, reply.id, accessToken);
+      setSubject(draft.subject || `Re: Application for ${roleTitle} at ${companyName}`);
+      setBody(draft.body || "");
+    } catch (err) {
+      setError(err.message || "Failed to generate AI reply draft.");
+    } finally {
+      setDrafting(false);
+    }
+  };
+
+  const handleSendReply = async () => {
+    if (!subject.trim() || !body.trim()) {
+      setError("Subject and body are required.");
+      return;
+    }
+    try {
+      setSending(true);
+      setError("");
+      await sendReply(appId, reply.id, subject.trim(), body.trim(), accessToken);
+      setComposing(false);
+      if (onReplySent) onReplySent();
+    } catch (err) {
+      setError(err.message || "Failed to send reply.");
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
     <div
       style={{
         background: "var(--paper-raised)",
-        border: "1px solid var(--line)",
+        border: reply.responded ? "1px solid var(--sage-fg)" : "1px solid var(--line)",
         borderRadius: 10,
-        padding: "14px 18px",
-        marginBottom: 10,
+        padding: "16px 18px",
+        marginBottom: 14,
         transition: "border-color 0.2s ease",
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: 12,
-        }}
-      >
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 13.5,
-              color: "var(--ink)",
-              lineHeight: 1.5,
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            <EmailText>{message}</EmailText>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>
+              {formatDate(reply.received_at)}
+            </span>
+            {reply.responded && (
+              <span
+                id={`responded-badge-${reply.id}`}
+                style={{
+                  background: "var(--sage-bg)",
+                  color: "var(--sage-fg)",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  padding: "2px 8px",
+                  borderRadius: 12,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                <CheckCircle2 size={12} /> Responded
+              </span>
+            )}
           </div>
-          <div
-            style={{
-              fontSize: 12,
-              color: "var(--ink-soft)",
-              marginTop: 6,
-            }}
-          >
-            {formatDate(reply.received_at)}
+          <div style={{ fontSize: 13.5, color: "var(--ink)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+            <EmailText>{message}</EmailText>
           </div>
         </div>
       </div>
+
+      {/* Action buttons when not composing */}
+      {!composing && (
+        <div style={{ display: "flex", gap: 8, marginTop: 14, paddingTop: 10, borderTop: "1px solid var(--line)" }}>
+          <button
+            id={`reply-manual-btn-${reply.id}`}
+            onClick={handleStartManual}
+            style={{
+              background: "var(--paper)",
+              border: "1px solid var(--line)",
+              borderRadius: 6,
+              padding: "6px 12px",
+              fontSize: 12.5,
+              fontWeight: 600,
+              color: "var(--ink)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+            }}
+          >
+            <Edit3 size={13} /> Write manually
+          </button>
+
+          <button
+            id={`reply-ai-btn-${reply.id}`}
+            onClick={handleStartAIDraft}
+            disabled={drafting}
+            style={{
+              background: "var(--ink)",
+              color: "var(--paper)",
+              border: "none",
+              borderRadius: 6,
+              padding: "6px 12px",
+              fontSize: 12.5,
+              fontWeight: 600,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+            }}
+          >
+            {drafting ? (
+              <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
+            ) : (
+              <Sparkles size={13} />
+            )}
+            Draft with AI
+          </button>
+        </div>
+      )}
+
+      {/* Compose Form */}
+      {composing && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px dashed var(--line)" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--ink)" }}>
+            Replying to recruiter:
+          </div>
+
+          {error && (
+            <div style={{ background: "var(--rust-bg)", color: "var(--rust-fg)", padding: "8px 12px", borderRadius: 6, fontSize: 12.5, marginBottom: 10 }}>
+              {error}
+            </div>
+          )}
+
+          {drafting && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink-soft)", marginBottom: 10 }}>
+              <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} />
+              Drafting reply with AI...
+            </div>
+          )}
+
+          {!drafting && (
+            <>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 4 }}>
+                  Subject
+                </label>
+                <input
+                  type="text"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="Subject line..."
+                  id={`reply-subject-input-${reply.id}`}
+                  style={{
+                    width: "100%",
+                    padding: "8px 12px",
+                    fontSize: 13.5,
+                    border: "1px solid var(--line)",
+                    borderRadius: 6,
+                    background: "var(--paper)",
+                  }}
+                />
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 4 }}>
+                  Body
+                </label>
+                <textarea
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  placeholder="Write your reply..."
+                  rows={5}
+                  id={`reply-body-input-${reply.id}`}
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    fontSize: 13.5,
+                    border: "1px solid var(--line)",
+                    borderRadius: 6,
+                    background: "var(--paper)",
+                    resize: "vertical",
+                    lineHeight: 1.5,
+                  }}
+                />
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  onClick={() => setComposing(false)}
+                  disabled={sending}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid var(--line)",
+                    borderRadius: 6,
+                    padding: "7px 14px",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    color: "var(--ink-soft)",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  id={`send-reply-btn-${reply.id}`}
+                  onClick={handleSendReply}
+                  disabled={sending}
+                  style={{
+                    background: "var(--rust)",
+                    color: "var(--paper)",
+                    border: "none",
+                    borderRadius: 6,
+                    padding: "7px 16px",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  {sending ? (
+                    <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />
+                  ) : (
+                    <Send size={14} />
+                  )}
+                  Send reply
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -242,7 +453,6 @@ export default function ApplicationDetail() {
     try {
       setUpdating(true);
       await updateApplicationStatus(id, newStatus, accessToken);
-      // Re-fetch full detail to get updated nested data
       const full = await fetchApplicationDetail(id, accessToken);
       setApp(full);
     } catch (err) {
@@ -318,7 +528,6 @@ export default function ApplicationDetail() {
           }}
         >
           <Loader2
-            className="spin"
             size={24}
             style={{ animation: "spin 1s linear infinite" }}
           />
@@ -562,17 +771,20 @@ export default function ApplicationDetail() {
               }}
             >
               <Mail size={16} color="var(--sage-fg)" />
-              <h3
-                style={{
-                  fontSize: 16,
-                  fontWeight: 600,
-                }}
-              >
+              <h3 style={{ fontSize: 16, fontWeight: 600 }}>
                 Replies ({replyLogs.length})
               </h3>
             </div>
             {replyLogs.map((reply) => (
-              <ReplyCard key={reply.id} reply={reply} />
+              <ReplyCard
+                key={reply.id}
+                reply={reply}
+                appId={app.id}
+                accessToken={accessToken}
+                onReplySent={loadApplication}
+                roleTitle={app.role_title}
+                companyName={app.company_name}
+              />
             ))}
           </div>
         )}
@@ -597,12 +809,7 @@ export default function ApplicationDetail() {
               }}
             >
               <Send size={15} color="var(--ink-soft)" />
-              <h3
-                style={{
-                  fontSize: 16,
-                  fontWeight: 600,
-                }}
-              >
+              <h3 style={{ fontSize: 16, fontWeight: 600 }}>
                 Outreach Email
               </h3>
             </div>
@@ -770,7 +977,6 @@ export default function ApplicationDetail() {
           >
             {deleting ? (
               <Loader2
-                className="spin"
                 size={15}
                 style={{ animation: "spin 1s linear infinite" }}
               />

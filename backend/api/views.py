@@ -37,7 +37,7 @@ from services.text_extractor import (
     extract_text_from_file,
 )
 
-from .models import EmailAccount, EmailLog, EmailVerificationCode, JobApplication, JobPosting, Resume
+from .models import EmailAccount, EmailLog, EmailVerificationCode, JobApplication, JobPosting, ReplyLog, Resume
 from .serializers import (
     JobApplicationDetailSerializer,
     JobApplicationSerializer,
@@ -560,7 +560,7 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
     serializer_class = JobApplicationSerializer
 
     def get_throttles(self):
-        if self.action == "draft_email":
+        if self.action in ["draft_email", "draft_reply"]:
             self.throttle_scope = "draft_email"
             return [ScopedRateThrottle()]
         return super().get_throttles()
@@ -738,6 +738,209 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK,
         )
+
+    @action(detail=True, methods=["post"], url_path="draft-reply")
+    def draft_reply(self, request, pk=None):
+        """AI-draft a reply to a specific HR ReplyLog message.
+
+        Expects ``{"reply_log_id": 123}`` in request body.
+        Returns draft ``{"subject": "...", "body": "..."}``. Does not save anything.
+        """
+        app = self.get_object()
+        reply_log_id = request.data.get("reply_log_id")
+        if not reply_log_id:
+            return Response(
+                {"detail": "reply_log_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            reply_log = app.reply_logs.get(pk=reply_log_id)
+        except ReplyLog.DoesNotExist:
+            return Response(
+                {"detail": "ReplyLog not found for this application."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        user_email = request.user.email
+        user_name = (
+            f"{request.user.first_name} {request.user.last_name}".strip()
+            or user_email.split("@")[0]
+        )
+
+        prompt = (
+            f"Write a professional email reply to a recruiter who sent the following message:\n\n"
+            f"Recruiter's Message:\n{reply_log.body or reply_log.snippet}\n\n"
+            f"Context:\n"
+            f"Company: {app.company_name}\n"
+            f"Role: {app.role_title}\n"
+            f"Job Description:\n{app.jd_text}\n\n"
+            f"The reply is sent from: {user_name} ({user_email}).\n"
+            f"Please write a short, compelling subject line (starting with Re:) and body.\n"
+            f"Return the response in JSON format matching exactly this structure:\n"
+            f"{{\n"
+            f'  "subject": "...",\n'
+            f'  "body": "..."\n'
+            f"}}\n"
+            f"Do not include any other text, markdown formatting like ```json or wrappers around it. Return only the JSON object."
+        )
+
+        from services.ai_writer import generate
+
+        try:
+            generated_text = generate(
+                prompt,
+                {
+                    "company_name": app.company_name,
+                    "role_title": app.role_title,
+                    "reply_body": reply_log.body or reply_log.snippet,
+                    "user_name": user_name,
+                    "user_email": user_email,
+                },
+            )
+
+            text = generated_text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            elif text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
+
+            default_subject = f"Re: Application for {app.role_title} at {app.company_name}"
+            try:
+                data = json.loads(text)
+                subject = data.get("subject", default_subject)
+                body = data.get("body", generated_text)
+            except Exception:
+                subject = default_subject
+                body = generated_text
+
+            return Response(
+                {"subject": subject, "body": body}, status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {"detail": f"AI drafting failed: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @action(detail=True, methods=["post"], url_path="send-reply")
+    def send_reply(self, request, pk=None):
+        """Send a reply to an HR ReplyLog via connected Gmail in the existing thread.
+
+        Expects ``{"reply_log_id": 123, "subject": "...", "body": "..."}``.
+        Attaches active resume if available. Creates EmailLog(direction=outbound, type=reply).
+        Marks ReplyLog.responded = True.
+        """
+        from services.gmail_service import send_email as gmail_send
+
+        app = self.get_object()
+        reply_log_id = request.data.get("reply_log_id")
+        subject = request.data.get("subject", "").strip()
+        body = request.data.get("body", "").strip()
+
+        if not reply_log_id or not subject or not body:
+            return Response(
+                {"detail": "reply_log_id, subject, and body are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            reply_log = app.reply_logs.get(pk=reply_log_id)
+        except ReplyLog.DoesNotExist:
+            return Response(
+                {"detail": "ReplyLog not found for this application."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Get connected email account
+        email_account = (
+            EmailAccount.objects.filter(user=request.user)
+            .order_by("-connected_at")
+            .first()
+        )
+        if not email_account:
+            return Response(
+                {"detail": "No connected email account. Please connect your Gmail first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Recipient email — fallback to recruiter_email
+        to_email = app.recruiter_email
+        if not to_email:
+            return Response(
+                {"detail": "No recipient email on this application."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Find existing gmail_thread_id from EmailLog(s)
+        first_email_log = app.email_logs.filter(gmail_thread_id__gt="").first()
+        thread_id = first_email_log.gmail_thread_id if first_email_log else ""
+
+        # Get active resume for attachment
+        active_resume = (
+            Resume.objects.filter(user=request.user)
+            .order_by("-uploaded_at")
+            .first()
+        )
+        attachment_data = None
+        attachment_filename = None
+        if active_resume and active_resume.file:
+            try:
+                active_resume.file.open("rb")
+                attachment_data = active_resume.file.read()
+                attachment_filename = active_resume.original_filename
+                active_resume.file.close()
+            except Exception as exc:
+                logger.warning("Could not read resume file for reply attachment: %s", exc)
+                active_resume = None
+
+        try:
+            returned_thread_id = gmail_send(
+                email_account,
+                to=to_email,
+                subject=subject,
+                body=body,
+                attachment_data=attachment_data,
+                attachment_filename=attachment_filename,
+                thread_id=thread_id,
+                in_reply_to_msg_id=reply_log.gmail_message_id,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # Create outbound reply EmailLog
+        EmailLog.objects.create(
+            job_application=app,
+            direction="outbound",
+            type="reply",
+            in_reply_to=reply_log,
+            subject=subject,
+            body=body,
+            gmail_thread_id=returned_thread_id,
+            resume_attached=active_resume,
+        )
+
+        # Mark ReplyLog as responded
+        reply_log.responded = True
+        reply_log.save(update_fields=["responded"])
+
+        return Response(
+            {
+                "success": True,
+                "thread_id": returned_thread_id,
+                "reply_log_id": reply_log.id,
+                "responded": True,
+                "resume_attached": active_resume.original_filename if active_resume else None,
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
     @action(detail=True, methods=["post"], url_path="check-replies")
     def check_replies(self, request, pk=None):

@@ -179,6 +179,53 @@ export async function updateApplicationStatus(appId, newStatus, accessToken) {
   throw new Error(errData.detail || "Failed to update status");
 }
 
+// ── Phase 10 helpers ──────────────────────────────────────────
+
+/**
+ * AI-draft a reply to a specific HR ReplyLog.
+ * @param {number} appId - Job application ID
+ * @param {number} replyLogId - ReplyLog ID
+ * @param {string} accessToken
+ * @returns {Promise<{subject: string, body: string}>}
+ */
+export async function draftReply(appId, replyLogId, accessToken) {
+  const res = await authFetch(
+    `/job-applications/${appId}/draft-reply/`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reply_log_id: replyLogId }),
+    },
+    accessToken
+  );
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) return data;
+  throw new Error(data.detail || "Failed to draft reply");
+}
+
+/**
+ * Send a reply to an HR ReplyLog via connected mailbox.
+ * @param {number} appId - Job application ID
+ * @param {number} replyLogId - ReplyLog ID
+ * @param {string} subject
+ * @param {string} body
+ * @param {string} accessToken
+ * @returns {Promise<object>}
+ */
+export async function sendReply(appId, replyLogId, subject, body, accessToken) {
+  const res = await authFetch(
+    `/job-applications/${appId}/send-reply/`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reply_log_id: replyLogId, subject, body }),
+    },
+    accessToken
+  );
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) return data;
+  throw new Error(data.detail || "Failed to send reply");
+}
+
+
 // ── Phase 8 helpers ───────────────────────────────────────────
 
 /**

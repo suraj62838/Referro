@@ -160,6 +160,8 @@ def send_email(
     body: str,
     attachment_data: bytes | None = None,
     attachment_filename: str | None = None,
+    thread_id: str | None = None,
+    in_reply_to_msg_id: str | None = None,
 ) -> str:
     """Send an email via the Gmail API using the user's connected account.
 
@@ -170,6 +172,8 @@ def send_email(
         body: Email body (plain text).
         attachment_data: Raw bytes of the file to attach (or None).
         attachment_filename: The filename for the attachment header (or None).
+        thread_id: Optional Gmail thread ID to reply within an existing thread.
+        in_reply_to_msg_id: Optional Gmail message ID for In-Reply-To header.
 
     Returns:
         The Gmail thread ID of the sent message.
@@ -186,6 +190,9 @@ def send_email(
         message["to"] = to
         message["from"] = email_account.email_address
         message["subject"] = subject
+        if in_reply_to_msg_id:
+            message["In-Reply-To"] = in_reply_to_msg_id
+            message["References"] = in_reply_to_msg_id
 
         message.attach(MIMEText(body))
 
@@ -200,22 +207,29 @@ def send_email(
         message["to"] = to
         message["from"] = email_account.email_address
         message["subject"] = subject
+        if in_reply_to_msg_id:
+            message["In-Reply-To"] = in_reply_to_msg_id
+            message["References"] = in_reply_to_msg_id
 
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+    send_body = {"raw": raw}
+    if thread_id:
+        send_body["threadId"] = thread_id
 
     try:
         sent = (
             service.users()
             .messages()
-            .send(userId="me", body={"raw": raw})
+            .send(userId="me", body=send_body)
             .execute()
         )
-        thread_id = sent.get("threadId", "")
+        returned_thread_id = sent.get("threadId", "") or thread_id or ""
         logger.info(
             "Sent email to %s (thread %s) for user %s",
-            to, thread_id, email_account.user_id,
+            to, returned_thread_id, email_account.user_id,
         )
-        return thread_id
+        return returned_thread_id
     except Exception as exc:
         logger.error("Gmail send failed: %s", exc)
         raise ValueError(f"Failed to send email via Gmail: {exc}") from exc
