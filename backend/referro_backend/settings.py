@@ -22,7 +22,15 @@ SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-change-me-in-production")
 
 DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
 
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+]
+
+render_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+
+if render_hostname:
+    ALLOWED_HOSTS.append(render_hostname)
 
 # ---------- Apps ----------
 
