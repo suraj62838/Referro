@@ -146,6 +146,11 @@ CORS_ALLOWED_ORIGINS = os.getenv(
 
 CORS_ALLOW_CREDENTIALS = True
 
+CSRF_TRUSTED_ORIGINS = os.getenv(
+    "CSRF_TRUSTED_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5174",
+).split(",")
+
 # ---------- Celery ----------
 
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
