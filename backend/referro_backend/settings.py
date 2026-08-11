@@ -192,7 +192,8 @@ GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
 GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
 GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
     "GOOGLE_OAUTH_REDIRECT_URI",
-    "http://localhost:8000/api/email-accounts/oauth/callback/",
+    "https://referro-leg5.onrender.com/api/email-accounts/oauth/callback/",
+    # "http://localhost:8000/api/email-accounts/oauth/callback/",
 )
 
 # ---------- Field-level encryption (Phase 5) ----------
