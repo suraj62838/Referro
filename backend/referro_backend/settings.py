@@ -141,14 +141,14 @@ SIMPLE_JWT = {
 
 CORS_ALLOWED_ORIGINS = os.getenv(
     "CORS_ALLOWED_ORIGINS",
-    "GOOGLE_OAUTH_REDIRECT_URI",
+    "http://localhost:5173,http://127.0.0.1:5174",
 ).split(",")
 
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = os.getenv(
     "CSRF_TRUSTED_ORIGINS",
-    "GOOGLE_OAUTH_REDIRECT_URI",
+    "http://localhost:5173,http://127.0.0.1:5174",
 ).split(",")
 
 # ---------- Celery ----------
@@ -192,7 +192,7 @@ GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
 GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
 GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
     "GOOGLE_OAUTH_REDIRECT_URI",
-    "https://referro-leg5.onrender.com/api/email-accounts/oauth/callback/",
+    "https://referro-rfga.onrender.com/api/email-accounts/oauth/callback/",
     # "http://localhost:8000/api/email-accounts/oauth/callback/",
 )
 
