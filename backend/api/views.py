@@ -10,6 +10,7 @@ Phase 9: Added resume_view (GET/POST/DELETE); send_email attaches active resume.
 
 import json
 import logging
+import os
 import random
 from datetime import timedelta
 
@@ -386,7 +387,7 @@ def oauth_callback(request):
     state = request.GET.get("state", "")
     error = request.GET.get("error", "")
 
-    frontend_base = "http://localhost:5173"
+    frontend_base = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
     if error:
         logger.warning("OAuth callback received error: %s", error)
