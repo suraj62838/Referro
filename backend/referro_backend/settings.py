@@ -13,14 +13,30 @@ from pathlib import Path
 import dj_database_url
 from dotenv import load_dotenv
 
-# Load .env from project root (one level above backend/)
+
+# ============================================================
+# Base configuration
+# ============================================================
+
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-change-me-in-production")
+SECRET_KEY = os.getenv(
+    "SECRET_KEY",
+    "django-insecure-change-me-in-production",
+)
 
-DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
+DEBUG = os.getenv("DEBUG", "False").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+
+# ============================================================
+# Allowed Hosts
+# ============================================================
 
 ALLOWED_HOSTS = [
     "localhost",
@@ -32,7 +48,14 @@ render_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
 if render_hostname:
     ALLOWED_HOSTS.append(render_hostname)
 
-# ---------- Apps ----------
+# Optional: allow explicit production hostname
+if "referro-rfga.onrender.com" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append("referro-rfga.onrender.com")
+
+
+# ============================================================
+# Apps
+# ============================================================
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -41,15 +64,20 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+
     # Third-party
     "rest_framework",
     "rest_framework_simplejwt",
     "corsheaders",
+
     # Local
     "api",
 ]
 
-# ---------- Middleware ----------
+
+# ============================================================
+# Middleware
+# ============================================================
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -62,7 +90,13 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+
 ROOT_URLCONF = "referro_backend.urls"
+
+
+# ============================================================
+# Templates
+# ============================================================
 
 TEMPLATES = [
     {
@@ -80,40 +114,70 @@ TEMPLATES = [
     },
 ]
 
+
 WSGI_APPLICATION = "referro_backend.wsgi.application"
 
-# ---------- Database ----------
-# Falls back to SQLite for zero-config local dev when DATABASE_URL is absent.
 
-DATABASE_URL = os.getenv("DATABASE_URL") or "sqlite:///" + str(BASE_DIR / "db.sqlite3")
-DATABASES = {"default": dj_database_url.parse(DATABASE_URL, conn_max_age=600)}
+# ============================================================
+# Database
+# ============================================================
 
-# ---------- Auth / Passwords ----------
+DATABASE_URL = os.getenv(
+    "DATABASE_URL"
+) or "sqlite:///" + str(BASE_DIR / "db.sqlite3")
+
+DATABASES = {
+    "default": dj_database_url.parse(
+        DATABASE_URL,
+        conn_max_age=600,
+    )
+}
+
+
+# ============================================================
+# Password validation
+# ============================================================
 
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
-    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
-    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+    {
+        "NAME":
+        "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
+    },
+    {
+        "NAME":
+        "django.contrib.auth.password_validation.MinimumLengthValidator"
+    },
+    {
+        "NAME":
+        "django.contrib.auth.password_validation.CommonPasswordValidator"
+    },
+    {
+        "NAME":
+        "django.contrib.auth.password_validation.NumericPasswordValidator"
+    },
 ]
 
-# ---------- DRF ----------
-# README §1: IsAuthenticated is the default permission class —
-# only /api/auth/signup/ and /api/auth/login/ override to AllowAny.
+
+# ============================================================
+# Django REST Framework
+# ============================================================
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
+
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
         "api.permissions.IsVerifiedUser",
     ),
+
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
         "rest_framework.throttling.UserRateThrottle",
         "rest_framework.throttling.ScopedRateThrottle",
     ),
+
     "DEFAULT_THROTTLE_RATES": {
         "anon": "20/minute",
         "user": "100/minute",
@@ -125,106 +189,215 @@ REST_FRAMEWORK = {
     },
 }
 
-# ---------- SimpleJWT ----------
+
+# ============================================================
+# JWT Authentication
+# ============================================================
 
 SIMPLE_JWT = {
+    # Access token is short-lived
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+
+    # Keep users logged in for 30 days
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
+
+    # Issue a new refresh token when refreshing
     "ROTATE_REFRESH_TOKENS": True,
+
+    # Do not blacklist the old refresh token
     "BLACKLIST_AFTER_ROTATION": False,
-    "SIGNING_KEY": os.getenv("JWT_SIGNING_KEY", SECRET_KEY),
+
+    "SIGNING_KEY": os.getenv(
+        "JWT_SIGNING_KEY",
+        SECRET_KEY,
+    ),
+
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
-# ---------- CORS ----------
-# In development the Vite dev server runs on port 5173.
 
-CORS_ALLOWED_ORIGINS = os.getenv(
-    "CORS_ALLOWED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5174",
-).split(",")
+# ============================================================
+# CORS
+# ============================================================
+
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        (
+            "http://localhost:5173,"
+            "http://127.0.0.1:5174,"
+            "https://referro-eosin.vercel.app"
+        ),
+    ).split(",")
+    if origin.strip()
+]
 
 CORS_ALLOW_CREDENTIALS = True
 
-CSRF_TRUSTED_ORIGINS = os.getenv(
-    "CSRF_TRUSTED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5174",
-).split(",")
 
-# ---------- Celery ----------
+# ============================================================
+# CSRF
+# ============================================================
 
-CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CSRF_TRUSTED_ORIGINS",
+        (
+            "http://localhost:5173,"
+            "http://127.0.0.1:5174,"
+            "https://referro-eosin.vercel.app"
+        ),
+    ).split(",")
+    if origin.strip()
+]
+
+
+# ============================================================
+# Celery
+# ============================================================
+
+CELERY_BROKER_URL = os.getenv(
+    "REDIS_URL",
+    "redis://localhost:6379/0",
+)
+
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
+
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 
-# Celery Beat schedule — Phase 6: poll for replies every 5 minutes.
+
 CELERY_BEAT_SCHEDULE = {
     "poll-replies-every-5-min": {
         "task": "api.tasks.poll_replies",
-        "schedule": 300.0,  # 5 minutes
+        "schedule": 300.0,
     },
 }
 
-# ---------- i18n ----------
+
+# ============================================================
+# Internationalization
+# ============================================================
 
 LANGUAGE_CODE = "en-us"
+
 TIME_ZONE = "UTC"
+
 USE_I18N = True
 USE_TZ = True
 
-# ---------- Static ----------
+
+# ============================================================
+# Static files
+# ============================================================
 
 STATIC_URL = "static/"
 
-# ---------- Media (Phase 9: resume uploads) ----------
-# Local /media in dev; switch to S3/object storage in production.
+
+# ============================================================
+# Media files
+# ============================================================
+
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# ---------- Google OAuth (Phase 5) ----------
 
-GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "")
-GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "")
+# ============================================================
+# Google OAuth
+# ============================================================
+
+GOOGLE_OAUTH_CLIENT_ID = os.getenv(
+    "GOOGLE_OAUTH_CLIENT_ID",
+    "",
+)
+
+GOOGLE_OAUTH_CLIENT_SECRET = os.getenv(
+    "GOOGLE_OAUTH_CLIENT_SECRET",
+    "",
+)
+
 GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
     "GOOGLE_OAUTH_REDIRECT_URI",
     "https://referro-rfga.onrender.com/api/email-accounts/oauth/callback/",
-    # "http://localhost:8000/api/email-accounts/oauth/callback/",
 )
 
-# ---------- Field-level encryption (Phase 5) ----------
-# Fernet requires a 32-byte URL-safe base64-encoded key.
-# If FIELD_ENCRYPTION_KEY is not set, we derive one from SECRET_KEY for dev.
-# In production, always set FIELD_ENCRYPTION_KEY to a real random value.
-_raw_key = os.getenv("FIELD_ENCRYPTION_KEY", "")
+
+# ============================================================
+# Frontend URL
+# ============================================================
+
+FRONTEND_URL = os.getenv(
+    "FRONTEND_URL",
+    "http://localhost:5173",
+)
+
+
+# ============================================================
+# Field-level encryption
+# ============================================================
+
+_raw_key = os.getenv(
+    "FIELD_ENCRYPTION_KEY",
+    "",
+)
+
 if _raw_key:
     FIELD_ENCRYPTION_KEY = _raw_key.encode()
 else:
-    # Derive a stable 32-byte key from SECRET_KEY via SHA-256
-    _digest = hashlib.sha256(SECRET_KEY.encode()).digest()
-    FIELD_ENCRYPTION_KEY = base64.urlsafe_b64encode(_digest)
+    _digest = hashlib.sha256(
+        SECRET_KEY.encode()
+    ).digest()
 
-# ---------- Brevo (Phase 8) ----------
-# Used for transactional emails (verification codes).
-# If BREVO_API_KEY is empty, email_sender.py falls back to console logging.
-BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
-BREVO_SENDER_EMAIL = os.getenv(
-    "BREVO_SENDER_EMAIL",
-    os.getenv("DEFAULT_FROM_EMAIL", "noreply@referro.app"),
+    FIELD_ENCRYPTION_KEY = base64.urlsafe_b64encode(
+        _digest
+    )
+
+
+# ============================================================
+# Brevo
+# ============================================================
+
+BREVO_API_KEY = os.getenv(
+    "BREVO_API_KEY",
+    "",
 )
 
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+BREVO_SENDER_EMAIL = os.getenv(
+    "BREVO_SENDER_EMAIL",
+    os.getenv(
+        "DEFAULT_FROM_EMAIL",
+        "noreply@referro.app",
+    ),
+)
+
+
+# ============================================================
+# Email
+# ============================================================
+
+EMAIL_BACKEND = (
+    "django.core.mail.backends.smtp.EmailBackend"
+)
 
 EMAIL_HOST = "smtp.gmail.com"
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 
-EMAIL_HOST_USER = "yourgmail@gmail.com"
-EMAIL_HOST_PASSWORD = "your_gmail_app_password"
+EMAIL_HOST_USER = os.getenv(
+    "EMAIL_HOST_USER",
+    "",
+)
+
+EMAIL_HOST_PASSWORD = os.getenv(
+    "EMAIL_HOST_PASSWORD",
+    "",
+)
 
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
-
