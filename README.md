@@ -48,6 +48,8 @@ npm run dev
 
 You'll need your own credentials for Google OAuth (Gmail sending), Brevo (verification emails), and an Anthropic API key for the AI drafting — none of these are bundled.
 
+live site: https://referro-eosin.vercel.app/login
+
 ## License
 
 Suraj Prajapati
