@@ -83,7 +83,7 @@ export default function Dashboard() {
           action={
             <button
               id="new-application-btn"
-              onClick={() => navigate("/board")}
+              onClick={() => navigate("/apply")}
               style={{
                 background: "var(--rust)",
                 color: "var(--paper)",

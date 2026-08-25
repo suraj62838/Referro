@@ -226,6 +226,8 @@ CORS_ALLOWED_ORIGINS = [
         "CORS_ALLOWED_ORIGINS",
         (
             "http://localhost:5173,"
+            "http://localhost:5174,"
+            "http://127.0.0.1:5173,"
             "http://127.0.0.1:5174,"
             "https://referro-eosin.vercel.app"
         ),
@@ -246,6 +248,8 @@ CSRF_TRUSTED_ORIGINS = [
         "CSRF_TRUSTED_ORIGINS",
         (
             "http://localhost:5173,"
+            "http://localhost:5174,"
+            "http://127.0.0.1:5173,"
             "http://127.0.0.1:5174,"
             "https://referro-eosin.vercel.app"
         ),
@@ -325,7 +329,7 @@ GOOGLE_OAUTH_CLIENT_SECRET = os.getenv(
 
 GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
     "GOOGLE_OAUTH_REDIRECT_URI",
-    "https://referro-rfga.onrender.com/api/email-accounts/oauth/callback/",
+    "http://localhost:8000/api/email-accounts/oauth/callback/",
 )
 
 

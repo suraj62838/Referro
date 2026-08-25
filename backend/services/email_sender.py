@@ -1,7 +1,7 @@
 """
 Transactional email sender for system emails (verification codes, etc.).
-Phase 8: Uses Brevo when BREVO_API_KEY is configured, otherwise
-falls back to Django console logging for local development.
+Uses Brevo when BREVO_API_KEY is configured, otherwise
+falls back to Django logging for local development.
 
 This is NOT for outreach emails — those go through the user's connected
 Gmail/Outlook via services/gmail_service.py.
@@ -30,24 +30,9 @@ def send_verification_code(to_email: str, code: str) -> bool:
         getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@referro.app"),
     )
 
-    # In DEBUG / dev mode, always output the code to backend terminal console for immediate access
+    # In DEBUG / dev mode, log the verification code for development convenience
     if getattr(settings, "DEBUG", False):
-        logger.info(
-            "===================================================\n"
-            "  VERIFICATION CODE for %s: %s\n"
-            "===================================================",
-            to_email,
-            code,
-        )
-        try:
-            print(
-                f"\n===================================================\n"
-                f"  [VERIFICATION CODE] for {to_email}: {code}\n"
-                f"===================================================\n",
-                flush=True,
-            )
-        except Exception:
-            pass
+        logger.info("VERIFICATION CODE for %s: %s", to_email, code)
 
     if not brevo_key:
         return True
@@ -128,4 +113,3 @@ def send_verification_code(to_email: str, code: str) -> bool:
         pass
 
     return True if getattr(settings, "DEBUG", False) else sent_successfully
-

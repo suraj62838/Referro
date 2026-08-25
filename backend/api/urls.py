@@ -30,7 +30,6 @@ urlpatterns = [
         name="auth-token-obtain",
     ),
     path("auth/refresh/", TokenRefreshView.as_view(), name="auth-token-refresh"),
-    path("auth/test-protected/", views.test_protected, name="auth-test-protected"),
     # Phase 8: Email verification
     path("auth/verify-email/", views.verify_email, name="auth-verify-email"),
     path("auth/resend-code/", views.resend_code, name="auth-resend-code"),

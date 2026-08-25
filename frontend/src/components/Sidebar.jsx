@@ -82,7 +82,7 @@ export default function Sidebar() {
           const active =
             location.pathname === it.path ||
             (location.pathname.startsWith("/application/") && it.path === "/dashboard") ||
-            (location.pathname === "/apply" && it.path === "/board");
+            (location.pathname === "/apply" && it.path === "/dashboard");
           const Icon = it.icon;
           return (
             <button

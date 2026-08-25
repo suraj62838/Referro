@@ -98,13 +98,6 @@ class MyTokenObtainPairView(TokenObtainPairView):
     serializer_class = MyTokenObtainPairSerializer
 
 
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def test_protected(request):
-    """Simple protected endpoint for testing authentication."""
-    return Response({"message": "authenticated"})
-
-
 def _generate_verification_code(user):
     """Create a 6-digit verification code with 10-minute expiry.
     Returns the code string."""

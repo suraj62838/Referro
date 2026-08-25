@@ -33,26 +33,25 @@ class AuthTests(APITestCase):
         # 3. Login with the credentials
         login_data = {"email": "testuser@example.com", "password": "securePass123!"}
         response = self.client.post(login_url, login_data, format="json")
-        if response.status_code != status.HTTP_200_OK:
-            print("Login failed with errors:", response.data)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("access", response.data)
         access_token = response.data["access"]
         refresh_token = response.data["refresh"]
 
         # 4. Access a protected endpoint without token (should fail with 401)
-        # Since we don't have another model endpoint yet, let's call the admin or a dummy
-        # view, or we can use the client credentials to test simple jwt.
-        # Actually, let's define a simple protected test view for this purpose.
-        protected_url = "/api/auth/test-protected/"
+        protected_url = "/api/email-accounts/me/"
         response = self.client.get(protected_url)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        # Mark user verified for testing protected endpoint access
+        user = User.objects.get(email="testuser@example.com")
+        user.profile.is_verified = True
+        user.profile.save()
 
         # 5. Access the protected endpoint with valid token (should succeed with 200)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
         response = self.client.get(protected_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["message"], "authenticated")
 
         # 6. Test Refresh Token
         self.client.credentials()  # Clear credentials
