@@ -7,6 +7,7 @@ import {
   checkEmailAccount,
   getOAuthConnectUrl,
   sendEmail,
+  getResume,
 } from "../api.js";
 import { Field } from "../components/ui.jsx";
 import AppLayout from "../components/AppLayout.jsx";
@@ -104,6 +105,9 @@ export default function Apply() {
   const [sending, setSending] = useState(false);
   const [sendSuccess, setSendSuccess] = useState(false);
 
+  // Phase 9: resume status
+  const [resumeInfo, setResumeInfo] = useState(undefined); // undefined = loading, null = none, object = has resume
+
   // Auto-detect email when JD text changes (only when pasting manually)
   useEffect(() => {
     if (isFromBoard) return;
@@ -128,6 +132,15 @@ export default function Apply() {
     return () => {
       cancelled = true;
     };
+  }, [accessToken]);
+
+  // Fetch active resume on mount
+  useEffect(() => {
+    let cancelled = false;
+    getResume(accessToken)
+      .then((data) => { if (!cancelled) setResumeInfo(data); })
+      .catch(() => { if (!cancelled) setResumeInfo(null); });
+    return () => { cancelled = true; };
   }, [accessToken]);
 
   // Handle parsing file uploads via the extraction endpoint
@@ -984,11 +997,37 @@ export default function Apply() {
                     display: "flex",
                     alignItems: "center",
                     gap: 8,
-                    color: "var(--ink)",
+                    color: resumeInfo ? "var(--ink)" : "var(--amber-fg)",
                   }}
                 >
-                  <Paperclip size={15} color="var(--sage-fg)" />
-                  <span>Resume attached automatically</span>
+                  <Paperclip
+                    size={15}
+                    color={resumeInfo ? "var(--sage-fg)" : "var(--amber-fg)"}
+                  />
+                  {resumeInfo === undefined ? (
+                    <span style={{ color: "var(--ink-soft)" }}>Checking resume…</span>
+                  ) : resumeInfo ? (
+                    <span>
+                      Resume:{" "}
+                      <strong style={{ fontWeight: 600 }}>
+                        {resumeInfo.original_filename}
+                      </strong>
+                    </span>
+                  ) : (
+                    <span>
+                      No resume —{" "}
+                      <a
+                        href="/profile"
+                        style={{
+                          color: "var(--amber-fg)",
+                          fontWeight: 600,
+                          textDecoration: "underline",
+                        }}
+                      >
+                        upload one
+                      </a>
+                    </span>
+                  )}
                 </div>
 
                 <div

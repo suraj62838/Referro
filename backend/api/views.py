@@ -581,23 +581,27 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
     def draft_email(self, request, pk=None):
         """AI-draft an outreach email for this application."""
         app = self.get_object()  # Scopes automatically to user since get_queryset is filtered by user
-        
+
         user_email = request.user.email
         user_name = f"{request.user.first_name} {request.user.last_name}".strip() or user_email.split("@")[0]
 
         prompt = (
-            f"Write a personalized, professional cold outreach email to a recruiter for the following job:\n"
+            "Write a cold outreach email for the job below. Keep it to 120-160 words across exactly 3 paragraphs.\n"
             f"Company: {app.company_name}\n"
             f"Role: {app.role_title}\n"
             f"Job Description:\n{app.jd_text}\n\n"
-            f"The email is sent from: {user_name} ({user_email}).\n"
-            f"Please write a short, compelling subject line and body. "
-            f"Return the response in JSON format matching exactly this structure:\n"
-            f"{{\n"
-            f"  \"subject\": \"...\",\n"
-            f"  \"body\": \"...\"\n"
-            f"}}\n"
-            f"Do not include any other text, markdown formatting like ```json or wrappers around it. Return only the JSON object."
+            f"Sender: {user_name} <{user_email}>\n\n"
+            "Rules:\n"
+            f"1. Open paragraph: Start with a concrete sentence naming the role and company. "
+            f"   Do NOT start with 'I am excited', 'I am writing to', or any similar throat-clearing opener. "
+            f"   Do NOT use a placeholder like [Recruiter Name]. Open with 'Hi there,' or 'Hi {app.company_name} Team,'.\n"
+            "2. Middle paragraph: 2-3 sentences on the single most relevant thing in your background. "
+            "   Be specific, not a list of buzzwords. No stacked skill lists.\n"
+            f"3. Closing paragraph: One sentence call-to-action. Sign off 'Best,' on its own line, then '{user_name}' on the next line.\n"
+            "\n"
+            "Return ONLY a JSON object with exactly two string keys: \"subject\" and \"body\".\n"
+            "For newlines in the body value, use the JSON escape sequence \\n (backslash + n), NOT literal line breaks inside the JSON string.\n"
+            "Output nothing outside the JSON object — no markdown fences, no commentary."
         )
 
         from services.ai_writer import generate
@@ -622,13 +626,17 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
 
             try:
                 data = json.loads(text)
-                subject = data.get("subject", f"Application for {app.role_title} at {app.company_name}")
-                body = data.get("body", generated_text)
+                subject = str(data.get("subject", f"Application for {app.role_title} at {app.company_name}")).strip()
+                body = str(data.get("body", generated_text)).strip()
             except Exception:
-                # If parsing fails, fall back to extracting Subject or just using generated text as body
+                # If JSON parsing fails, use the raw text as the body
                 subject = f"Application for {app.role_title} at {app.company_name}"
                 body = generated_text
-                
+
+            # Normalize: convert literal \n sequences (two chars: backslash + n) to real newlines.
+            # This handles models that output \n as text instead of as a JSON escape sequence.
+            body = body.replace("\\n", "\n")
+
             return Response({"subject": subject, "body": body}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
@@ -649,7 +657,10 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
         app = self.get_object()
 
         subject = request.data.get("subject", "").strip()
-        body = request.data.get("body", "").strip()
+        # Normalize literal \n sequences (backslash + n) to real newlines before sending.
+        # This is a safety net for cases where the body arrives with escaped newlines
+        # rather than actual newline characters (e.g. when copied from a JSON string).
+        body = request.data.get("body", "").strip().replace("\\n", "\n")
 
         if not subject or not body:
             return Response(
@@ -767,16 +778,13 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
             f"Recruiter's Message:\n{reply_log.body or reply_log.snippet}\n\n"
             f"Context:\n"
             f"Company: {app.company_name}\n"
-            f"Role: {app.role_title}\n"
-            f"Job Description:\n{app.jd_text}\n\n"
-            f"The reply is sent from: {user_name} ({user_email}).\n"
-            f"Please write a short, compelling subject line (starting with Re:) and body.\n"
-            f"Return the response in JSON format matching exactly this structure:\n"
-            f"{{\n"
-            f'  "subject": "...",\n'
-            f'  "body": "..."\n'
-            f"}}\n"
-            f"Do not include any other text, markdown formatting like ```json or wrappers around it. Return only the JSON object."
+            f"Role: {app.role_title}\n\n"
+            f"Sender: {user_name} <{user_email}>\n\n"
+            f"Write a short reply (80-120 words). Be direct, warm, and professional.\n"
+            f"Subject line should start with 'Re:'. Sign off 'Best,' then '{user_name}'.\n"
+            "Return ONLY a JSON object with exactly two string keys: \"subject\" and \"body\".\n"
+            "For newlines in the body value, use the JSON escape sequence \\n (backslash + n), NOT literal line breaks inside the JSON string.\n"
+            "Output nothing outside the JSON object."
         )
 
         from services.ai_writer import generate
@@ -805,11 +813,14 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
             default_subject = f"Re: Application for {app.role_title} at {app.company_name}"
             try:
                 data = json.loads(text)
-                subject = data.get("subject", default_subject)
-                body = data.get("body", generated_text)
+                subject = str(data.get("subject", default_subject)).strip()
+                body = str(data.get("body", generated_text)).strip()
             except Exception:
                 subject = default_subject
                 body = generated_text
+
+            # Normalize literal \n sequences to real newlines
+            body = body.replace("\\n", "\n")
 
             return Response(
                 {"subject": subject, "body": body}, status=status.HTTP_200_OK
@@ -833,7 +844,8 @@ class JobApplicationViewSet(viewsets.ModelViewSet):
         app = self.get_object()
         reply_log_id = request.data.get("reply_log_id")
         subject = request.data.get("subject", "").strip()
-        body = request.data.get("body", "").strip()
+        # Normalize literal \n sequences to real newlines before sending (belt-and-suspenders).
+        body = request.data.get("body", "").strip().replace("\\n", "\n")
 
         if not reply_log_id or not subject or not body:
             return Response(

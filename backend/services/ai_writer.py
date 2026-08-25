@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 def generate(prompt: str, context: dict | None = None) -> str:
     """
     Call the Groq Chat Completions API to generate text.
+
+    Returns the raw generated string. Callers are responsible for JSON
+    parsing when a structured response is expected.
     """
     is_testing = "test" in sys.argv or os.getenv("DJANGO_TESTING") == "true"
     api_key = os.getenv("GROQ_API_KEY")
@@ -60,21 +63,33 @@ def generate(prompt: str, context: dict | None = None) -> str:
     try:
         client = Groq(api_key=api_key)
 
-        response = client.chat.completions.create(
-            model="openai/gpt-oss-20b",
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-            temperature=0.7,
-            max_tokens=1024,
-        )
+        # For reasoning models like openai/gpt-oss-20b, reasoning_format="hidden" prevents
+        # reasoning tokens from consuming the token budget and hiding the completion content.
+        kwargs = {
+            "model": "openai/gpt-oss-20b",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.7,
+            "max_tokens": 4096,
+        }
+        try:
+            kwargs["reasoning_format"] = "hidden"
+            response = client.chat.completions.create(**kwargs)
+        except Exception:
+            # Fallback if reasoning_format is not accepted by the client version
+            kwargs.pop("reasoning_format", None)
+            response = client.chat.completions.create(**kwargs)
 
-        generated_text = response.choices[0].message.content.strip()
+        msg = response.choices[0].message
+        generated_text = (msg.content or "").strip()
 
-        # Remove markdown code fences if present (e.g. ```json ... ```)
+        # Fallback if content is empty but reasoning is present
+        if not generated_text:
+            reasoning = getattr(msg, "reasoning", "") or ""
+            if reasoning:
+                logger.warning("Groq content was empty; extracted from reasoning output.")
+                generated_text = reasoning.strip()
+
+        # Strip markdown code fences if present (e.g. ```json ... ```)
         if generated_text.startswith("```json"):
             generated_text = generated_text[7:]
         elif generated_text.startswith("```"):
@@ -82,21 +97,9 @@ def generate(prompt: str, context: dict | None = None) -> str:
         if generated_text.endswith("```"):
             generated_text = generated_text[:-3]
         generated_text = generated_text.strip()
+        # Handle a bare "json\n" prefix that some models emit
         if generated_text.startswith("json\n") or generated_text.startswith("json\r\n"):
             generated_text = generated_text.split("\n", 1)[1].strip()
-
-        # Strip remaining markdown formatting symbols
-        generated_text = (
-            generated_text
-            .replace("**", "")
-            .replace("###", "")
-            .replace("##", "")
-            .replace("#", "")
-            .replace("{", "")
-            .replace("}", "")
-            .replace("(", "")
-            .replace(")", "")
-        )
 
         return generated_text
 
